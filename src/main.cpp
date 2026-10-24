@@ -20,8 +20,8 @@ int WINAPI wWinMain(HINSTANCE /*hInstance*/, HINSTANCE /*hPrevInstance*/, LPWSTR
         return 1;
     }
 
-    // 2. Create the dialogue Speech Bubble window (360x190 pixels)
-    screenmate::ui::BubbleWindow bubble(360, 190);
+    // 2. Create the dialogue Speech Bubble window (dynamic auto-sizing 380px wide)
+    screenmate::ui::BubbleWindow bubble(380, 170, 480);
     if (!bubble.create(blob.hwnd())) {
         MessageBoxW(nullptr, L"Failed to create ScreenMate Bubble window.", L"Error", MB_ICONERROR);
         return 1;
@@ -54,7 +54,7 @@ int WINAPI wWinMain(HINSTANCE /*hInstance*/, HINSTANCE /*hPrevInstance*/, LPWSTR
             std::string system_prompt =
                 "You are ScreenMate, an intelligent, concise, witty personal companion and friend to Alan. "
                 "You live directly on his desktop as a glowing organic companion. "
-                "Keep answers natural, warm, thoughtful, and punchy. Avoid robotic boilerplate.";
+                "Keep answers natural, warm, thoughtful, and punchy. Aim for 2-4 sentences max unless explicitly asked for detail.";
 
             std::string full_reply = client.simple_chat(
                 system_prompt,

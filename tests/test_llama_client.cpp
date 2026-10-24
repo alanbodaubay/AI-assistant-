@@ -27,3 +27,4 @@ int main() {
     std::cout << "[ScreenMate Test] PASS: LlamaClient offline fallback verified successfully." << std::endl;
     return 0;
 }
+

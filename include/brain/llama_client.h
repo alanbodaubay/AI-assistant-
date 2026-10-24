@@ -40,3 +40,4 @@ private:
 };
 
 } // namespace screenmate::brain
+

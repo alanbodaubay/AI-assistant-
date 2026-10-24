@@ -25,9 +25,13 @@ std::string wide_to_utf8(const std::wstring& wstr) {
 }
 } // namespace
 
-BubbleWindow::BubbleWindow(int width, int height)
+BubbleWindow::BubbleWindow(int width, int min_height, int max_height)
     : width_(width),
-      height_(height),
+      height_(min_height),
+      min_height_(min_height),
+      max_height_(max_height),
+      anchor_x_(500),
+      anchor_y_(500),
       hwnd_(nullptr),
       edit_hwnd_(nullptr),
       font_body_(nullptr),
@@ -201,26 +205,75 @@ bool BubbleWindow::create(HWND parent_hwnd) {
 }
 
 void BubbleWindow::show_near(int anchor_x, int anchor_y) {
+    anchor_x_ = anchor_x;
+    anchor_y_ = anchor_y;
+    reposition_window();
+    focus_input();
+}
+
+void BubbleWindow::reposition_window() {
     if (!hwnd_) return;
 
     // Center speech bubble horizontally relative to the 128px blob
-    int target_x = anchor_x + (128 - width_) / 2;
-    int target_y = anchor_y - height_ - 12;
+    int target_x = anchor_x_ + (128 - width_) / 2;
+    // Anchor bottom of speech bubble 12px above the top of the blob
+    int target_y = anchor_y_ - height_ - 12;
 
     // Clamp inside work area to never render offscreen
     RECT work_area = {};
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &work_area, 0);
 
     if (target_y < work_area.top + 8) {
-        // Blob is too close to the top of screen; flip bubble to appear below
-        target_y = anchor_y + 128 + 12;
+        // Blob is too close to top of screen; show below blob
+        target_y = anchor_y_ + 128 + 12;
     }
 
     target_x = (std::max)(static_cast<int>(work_area.left + 8), (std::min)(target_x, static_cast<int>(work_area.right - width_ - 8)));
     target_y = (std::max)(static_cast<int>(work_area.top + 8), (std::min)(target_y, static_cast<int>(work_area.bottom - height_ - 8)));
 
     SetWindowPos(hwnd_, HWND_TOPMOST, target_x, target_y, width_, height_, SWP_SHOWWINDOW);
-    focus_input();
+}
+
+void BubbleWindow::update_dynamic_layout() {
+    if (!hwnd_) return;
+
+    // Measure required text height
+    std::wstring wresponse = utf8_to_wide(current_response_);
+    HDC screen_dc = GetDC(hwnd_);
+    HDC mem_dc = CreateCompatibleDC(screen_dc);
+    HGDIOBJ old_font = SelectObject(mem_dc, font_body_);
+
+    RECT calc_rect = { 0, 0, width_ - 32, 0 };
+    DrawTextW(mem_dc, wresponse.c_str(), -1, &calc_rect, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+    int text_h = calc_rect.bottom - calc_rect.top;
+
+    SelectObject(mem_dc, old_font);
+    DeleteDC(mem_dc);
+    ReleaseDC(hwnd_, screen_dc);
+
+    // Layout overhead: header (32px) + bottom input margins (52px) + padding (10px) = 94px
+    int needed_height = text_h + 94;
+    int target_height = (std::max)(min_height_, (std::min)(needed_height, max_height_));
+
+    if (target_height != height_) {
+        height_ = target_height;
+
+        // Apply updated rounded window region for new height
+        HRGN rgn = CreateRoundRectRgn(0, 0, width_ + 1, height_ + 1, 14, 14);
+        SetWindowRgn(hwnd_, rgn, TRUE);
+
+        // Reposition child edit control to stay anchored at bottom
+        int input_y = height_ - 36;
+        int input_w = width_ - 32;
+        if (edit_hwnd_) {
+            SetWindowPos(edit_hwnd_, nullptr, 16, input_y, input_w, 24, SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+
+        // Adjust window position so expansion happens upward from the anchor
+        reposition_window();
+    }
+
+    InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
 void BubbleWindow::hide() {
@@ -250,7 +303,7 @@ void BubbleWindow::set_response_text(const std::string& text) {
     DWORD wnd_thread = GetWindowThreadProcessId(hwnd_, nullptr);
     if (GetCurrentThreadId() == wnd_thread) {
         current_response_ = text;
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        update_dynamic_layout();
     } else {
         auto* copy = new std::string(text);
         PostMessageW(hwnd_, WM_APP_SET_TEXT, 0, reinterpret_cast<LPARAM>(copy));
@@ -274,7 +327,7 @@ LRESULT BubbleWindow::handle_message(UINT msg, WPARAM wparam, LPARAM lparam) {
                 }
                 current_response_ += *token;
                 delete token;
-                InvalidateRect(hwnd_, nullptr, FALSE);
+                update_dynamic_layout();
             }
             return 0;
         }
@@ -284,7 +337,7 @@ LRESULT BubbleWindow::handle_message(UINT msg, WPARAM wparam, LPARAM lparam) {
             if (text) {
                 current_response_ = *text;
                 delete text;
-                InvalidateRect(hwnd_, nullptr, FALSE);
+                update_dynamic_layout();
             }
             return 0;
         }
@@ -332,12 +385,33 @@ LRESULT BubbleWindow::handle_message(UINT msg, WPARAM wparam, LPARAM lparam) {
             Ellipse(mem_dc, width_ - 26, 12, width_ - 18, 20);
             DeleteObject(dot_brush);
 
-            // 4. Response text
+            // 4. Response text with automatic auto-scroll viewport
             SelectObject(mem_dc, font_body_);
             SetTextColor(mem_dc, RGB(232, 232, 240));
-            RECT text_rect = { 16, 32, width_ - 16, height_ - 44 };
+
+            int text_top = 32;
+            int text_bottom = height_ - 44;
+            int avail_h = text_bottom - text_top;
+
             std::wstring wresponse = utf8_to_wide(current_response_);
-            DrawTextW(mem_dc, wresponse.c_str(), -1, &text_rect, DT_WORDBREAK | DT_NOPREFIX | DT_EDITCONTROL);
+            RECT measure_rect = { 0, 0, width_ - 32, 0 };
+            DrawTextW(mem_dc, wresponse.c_str(), -1, &measure_rect, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+            int measured_h = measure_rect.bottom - measure_rect.top;
+
+            // If text exceeds maximum bubble height, smoothly anchor view to newest text
+            int scroll_offset = 0;
+            if (measured_h > avail_h) {
+                scroll_offset = measured_h - avail_h;
+            }
+
+            HRGN clip_rgn = CreateRectRgn(16, text_top, width_ - 16, text_bottom);
+            SelectClipRgn(mem_dc, clip_rgn);
+
+            RECT draw_rect = { 16, text_top - scroll_offset, width_ - 16, text_top - scroll_offset + measured_h };
+            DrawTextW(mem_dc, wresponse.c_str(), -1, &draw_rect, DT_WORDBREAK | DT_NOPREFIX);
+
+            SelectClipRgn(mem_dc, nullptr);
+            DeleteObject(clip_rgn);
 
             // 5. Input box container background
             RECT input_box_rect = { 12, height_ - 40, width_ - 12, height_ - 8 };
