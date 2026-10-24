@@ -21,3 +21,4 @@ int main() {
     std::cout << "[PASS] BlobWindow lifecycle verified cleanly.\n";
     return 0;
 }
+

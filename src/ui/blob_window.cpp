@@ -7,7 +7,8 @@ BlobWindow::BlobWindow(int dimension)
       renderer_(dimension),
       buffer_(dimension, dimension),
       current_emotion_(renderer::BlobEmotion::Calm),
-      activity_level_(0.0f) {}
+      activity_level_(0.0f),
+      start_time_(std::chrono::steady_clock::now()) {}
 
 void BlobWindow::update_frame(double time_seconds) {
     renderer_.render(buffer_, time_seconds, current_emotion_, activity_level_);
@@ -43,6 +44,13 @@ void BlobWindow::cycle_emotion() {
 }
 
 LRESULT BlobWindow::handle_message(UINT msg, WPARAM wparam, LPARAM lparam) {
+    if (msg == WM_TIMER) {
+        auto now = std::chrono::steady_clock::now();
+        double elapsed_sec = std::chrono::duration<double>(now - start_time_).count();
+        update_frame(elapsed_sec);
+        return 0;
+    }
+
     switch (msg) {
         case WM_RBUTTONUP: {
             // Right-click context menu: Cycle mood or Exit

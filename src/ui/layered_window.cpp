@@ -83,6 +83,7 @@ bool LayeredWindow::create(int initial_x, int initial_y) {
     SetWindowDisplayAffinity(hwnd_, WDA_EXCLUDEFROMCAPTURE);
 
     setup_memory_dc();
+    SetTimer(hwnd_, 1, 33, nullptr); // 30 FPS animation timer during modal dragging
     return true;
 }
 

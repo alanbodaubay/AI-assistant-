@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include "ui/layered_window.h"
 #include "renderer/blob_renderer.h"
 
@@ -22,6 +23,7 @@ private:
     renderer::BgraBuffer buffer_;
     renderer::BlobEmotion current_emotion_;
     float activity_level_;
+    std::chrono::steady_clock::time_point start_time_;
 };
 
 } // namespace screenmate::ui
