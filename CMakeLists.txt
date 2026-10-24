@@ -34,11 +34,25 @@ endif()
 # Enable Testing
 enable_testing()
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/verify_headers.cpp")
-    add_executable(verify_headers tests/verify_headers.cpp)
-    add_test(NAME verify_headers COMMAND verify_headers)
-endif()
+# -------------------------------------------------------------
+# Target: ScreenMate Shell (Milestone 1 Desktop App)
+# -------------------------------------------------------------
+add_executable(screenmate_shell
+    src/main.cpp
+    src/renderer/blob_renderer.cpp
+    src/ui/layered_window.cpp
+    src/ui/blob_window.cpp
+)
+target_link_libraries(screenmate_shell PRIVATE ${PLATFORM_LIBS})
 
-# Status output
+# -------------------------------------------------------------
+# Target: Unit Tests
+# -------------------------------------------------------------
+add_executable(test_blob_renderer
+    tests/test_blob_renderer.cpp
+    src/renderer/blob_renderer.cpp
+)
+target_link_libraries(test_blob_renderer PRIVATE ${PLATFORM_LIBS})
+add_test(NAME TestBlobRenderer COMMAND test_blob_renderer)
+
 message(STATUS "ScreenMate AI C++20 configured for ${CMAKE_SYSTEM_NAME} (${CMAKE_CXX_COMPILER_ID})")
-
