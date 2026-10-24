@@ -1141,7 +1141,9 @@ SELECT
 FROM quarantine
 WHERE status = 'provisional' 
   AND distinct_calendar_days >= 2 
-  AND (last_seen_timestamp - first_seen_timestamp) >= 129600000;
+  AND (last_seen_timestamp - first_seen_timestamp) >= 129600000
+  AND observation_count >= 2
+  AND confidence >= 0.70;
 
 CREATE VIEW IF NOT EXISTS v_active_graph AS
 SELECT 
@@ -1166,6 +1168,47 @@ WHERE e.is_active = 1
   AND e.valid_until IS NULL 
   AND e.provisional = 0;
 ```
+
+### 6.3 Ledger Immutability Triggers (Append-Only Enforcement)
+
+The `events` table serves as the permanent, cryptographically-hashed ledger for all raw conversational turns, screen glances, and system actions. Immutability is enforced strictly at the database engine level via three triggers:
+
+1. **`trg_events_prevent_update`**: Intercepts any `UPDATE` statement on `events` and invokes `RAISE(ABORT, 'events table is immutable')`.
+2. **`trg_events_prevent_delete`**: Intercepts any `DELETE` statement on `events` and invokes `RAISE(ABORT, 'events table is immutable')`.
+3. **`trg_events_prevent_insert_replace`**: Prevents `INSERT OR REPLACE` conflict resolution from executing an internal `DELETE` before insertion. When `PRAGMA recursive_triggers = ON;` is active, this `BEFORE INSERT` trigger inspects existing primary keys and raises an `ABORT` exception if an entry with the target ID already exists, permanently defeating attempts to overwrite ledger history.
+
+### 6.4 FTS5 Full-Text Search Virtual Table & Sync Triggers
+
+ScreenMate indexes all conversation turns and visual screen payloads in SQLite's external content FTS5 virtual table `events_fts`:
+
+- **Automatic Synchronization**: `trg_events_ai` automatically populates the FTS5 index on every turn insertion (`AFTER INSERT ON events`). `trg_events_ad` synchronizes deletions if maintenance operations are executed.
+- **FTS5 Query Token Sanitization**: To safeguard against FTS5 syntax errors and search query injection, all user-provided query terms dispatched to FTS5 `MATCH` queries MUST undergo strict tokenization and sanitization:
+  - Disallow or escape raw syntax operator tokens (`AND`, `OR`, `NOT`, `NEAR`, `*`, `^`, `:`, `{`, `}`).
+  - Wrap search terms in escaped double quotes (e.g. `""term""`) before passing to `MATCH`.
+  - Strip control characters and sanitize input to prevent unhandled `sqlite3.OperationalError` exceptions during full-text recall.
+
+### 6.5 Anchor Integrity Triggers & Invariant Enforcement
+
+Anchor nodes and edges embody critical, non-negotiable personal facts (e.g., severe allergies, family relations, permanent user preferences). They are protected by structural schema constraints and active database triggers:
+
+- **Mathematical Bounds**: `nodes` and `edges` enforce `CHECK(stability > 0.0)`, `CHECK(stability_days > 0.0)`, and `CHECK(decay_rate >= 0.0)` to prevent division-by-zero or negative half-life decay corruption.
+- **Temporal Invariants**: `edges` enforce `CHECK(valid_until IS NULL OR valid_until >= valid_from)` to prevent inverted bitemporal intervals.
+- **Anchor Immutability**:
+  - `trg_nodes_prevent_anchor_demotion`: Aborts any attempt to demote an anchor node (`is_anchor = 1`) to a regular node (`is_anchor = 0`), or to increase its decay rate (`decay_rate > 0.0`).
+  - `trg_edges_prevent_anchor_demotion`: Aborts any attempt to demote an anchor edge (`is_anchor = 1`) to non-anchor status or to assign non-zero decay rates.
+
+### 6.6 Relational Views & Covering Indices for Sub-5ms Traversal
+
+To satisfy sub-5ms retrieval budgets during conversational prompt assembly, SQLite relational views leverage multi-column covering indices:
+
+- **`v_active_anchors`**: Traverses non-decaying knowledge anchors directly via covering index `idx_nodes_anchor`.
+- **`v_active_graph`**: Joins active edges and nodes (`is_active = 1 AND valid_until IS NULL AND provisional = 0`), indexed by `idx_edges_source_target`.
+- **`v_quarantine_promotion_candidates`**: Evaluates candidates for permanent consolidation using a strict multi-factor gate:
+  1. `status = 'provisional'`
+  2. `distinct_calendar_days >= 2` (protects against single-day hallucination burst)
+  3. `elapsed_hours >= 36.0` (`(last_seen_timestamp - first_seen_timestamp) >= 129600000 ms`, preventing the midnight boundary cheat)
+  4. `observation_count >= 2` (requires corroborating multi-turn observations)
+  5. `confidence >= 0.70` (blocks low-confidence inferences from corrupting the persistent soul graph)
 
 ---
 
