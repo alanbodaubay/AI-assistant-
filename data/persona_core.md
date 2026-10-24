@@ -17,3 +17,4 @@
 ## 3. Formatting
 - Use natural plain text for speech bubbles.
 - Do not output markdown tables, raw XML tags, or code fences inside casual dialogue unless the user asks for code.
+

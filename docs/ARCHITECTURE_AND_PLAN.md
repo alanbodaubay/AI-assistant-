@@ -120,3 +120,4 @@ ScreenMate AI is an autonomous, visible, and evolving personal AI companion for 
 - Implement `app_launcher` for opening apps by name or path.
 - Implement `notes_vault` for creating and querying local markdown notes and reminders.
 - Add hook to connect to `epic-pascal`'s Windows Controller for future UI automation.
+

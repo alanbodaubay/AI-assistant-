@@ -37,3 +37,9 @@ data/soul.db-shm
 .idea/
 *.sublime-project
 *.sublime-workspace
+
+
+# Teamwork and python cache
+.agents/
+__pycache__/
+*.pyc

@@ -30,3 +30,4 @@ llama-server.exe ^
     --host 127.0.0.1
 
 endlocal
+

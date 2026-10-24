@@ -152,3 +152,4 @@ ctest --test-dir build --output-on-failure
 - [ ] **Milestone 3: The SQLite Graph Brain**: FTS5 event log, knowledge graph, 2-day provisional quarantine, and persona evolution.
 - [ ] **Milestone 4: Screen Perception**: Active window capture, settle timer, dHash change filter, and privacy blacklist.
 - [ ] **Milestone 5: Foundational Tools & Extensibility**: App launcher, markdown notes vault, and bridging to the `epic-pascal` Windows UI automation controller.
+

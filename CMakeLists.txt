@@ -34,5 +34,11 @@ endif()
 # Enable Testing
 enable_testing()
 
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/verify_headers.cpp")
+    add_executable(verify_headers tests/verify_headers.cpp)
+    add_test(NAME verify_headers COMMAND verify_headers)
+endif()
+
 # Status output
 message(STATUS "ScreenMate AI C++20 configured for ${CMAKE_SYSTEM_NAME} (${CMAKE_CXX_COMPILER_ID})")
+
