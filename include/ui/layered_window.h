@@ -33,6 +33,8 @@ public:
 
 protected:
     virtual LRESULT handle_message(UINT msg, WPARAM wparam, LPARAM lparam);
+    virtual void on_click() {}
+    virtual void on_move(int /*x*/, int /*y*/) {}
 
 private:
     static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);

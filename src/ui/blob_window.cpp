@@ -23,6 +23,26 @@ void BlobWindow::set_activity_level(float activity) {
     activity_level_ = activity;
 }
 
+void BlobWindow::set_on_click(std::function<void()> cb) {
+    on_click_cb_ = std::move(cb);
+}
+
+void BlobWindow::set_on_move(std::function<void(int x, int y)> cb) {
+    on_move_cb_ = std::move(cb);
+}
+
+void BlobWindow::on_click() {
+    if (on_click_cb_) {
+        on_click_cb_();
+    }
+}
+
+void BlobWindow::on_move(int x, int y) {
+    if (on_move_cb_) {
+        on_move_cb_(x, y);
+    }
+}
+
 void BlobWindow::cycle_emotion() {
     switch (current_emotion_) {
         case renderer::BlobEmotion::Calm:

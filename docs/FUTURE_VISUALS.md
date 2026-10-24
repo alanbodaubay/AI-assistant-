@@ -14,3 +14,4 @@
 - **Contextual Curiosity**:
   - Flies near a new window when opened to glance at context before returning to its perch.
   - Dims its glow and perches on the taskbar when a fullscreen video or game is detected.
+

@@ -42,6 +42,8 @@ add_executable(screenmate_shell
     src/renderer/blob_renderer.cpp
     src/ui/layered_window.cpp
     src/ui/blob_window.cpp
+    src/brain/llama_client.cpp
+    src/ui/bubble_window.cpp
 )
 target_link_libraries(screenmate_shell PRIVATE ${PLATFORM_LIBS})
 
@@ -63,5 +65,19 @@ add_executable(test_window_create
 )
 target_link_libraries(test_window_create PRIVATE ${PLATFORM_LIBS})
 add_test(NAME TestWindowCreate COMMAND test_window_create)
+
+add_executable(test_bubble_window
+    tests/test_bubble_window.cpp
+    src/ui/bubble_window.cpp
+)
+target_link_libraries(test_bubble_window PRIVATE ${PLATFORM_LIBS})
+add_test(NAME TestBubbleWindow COMMAND test_bubble_window)
+
+add_executable(test_llama_client
+    tests/test_llama_client.cpp
+    src/brain/llama_client.cpp
+)
+target_link_libraries(test_llama_client PRIVATE ${PLATFORM_LIBS})
+add_test(NAME TestLlamaClient COMMAND test_llama_client)
 
 message(STATUS "ScreenMate AI C++20 configured for ${CMAKE_SYSTEM_NAME} (${CMAKE_CXX_COMPILER_ID})")

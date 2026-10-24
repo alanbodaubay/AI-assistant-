@@ -1,6 +1,8 @@
 #include "ui/layered_window.h"
 #include <dwmapi.h>
 #include <stdexcept>
+#include <cmath>
+#include <cstdlib>
 
 namespace screenmate::ui {
 
@@ -184,12 +186,22 @@ LRESULT LayeredWindow::handle_message(UINT msg, WPARAM wparam, LPARAM lparam) {
     switch (msg) {
         case WM_LBUTTONDOWN: {
             // Native smooth window dragging
+            POINT pt_start = {};
+            GetCursorPos(&pt_start);
             ReleaseCapture();
             SendMessageW(hwnd_, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+            POINT pt_end = {};
+            GetCursorPos(&pt_end);
             RECT r = {};
             GetWindowRect(hwnd_, &r);
             x_ = r.left;
             y_ = r.top;
+            if (std::abs(static_cast<int>(pt_end.x - pt_start.x)) < 4 &&
+                std::abs(static_cast<int>(pt_end.y - pt_start.y)) < 4) {
+                on_click();
+            } else {
+                on_move(x_, y_);
+            }
             return 0;
         }
         case WM_MOVE: {
@@ -197,6 +209,7 @@ LRESULT LayeredWindow::handle_message(UINT msg, WPARAM wparam, LPARAM lparam) {
             GetWindowRect(hwnd_, &r);
             x_ = r.left;
             y_ = r.top;
+            on_move(x_, y_);
             return 0;
         }
         case WM_DESTROY:

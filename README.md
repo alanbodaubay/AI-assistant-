@@ -142,6 +142,10 @@ Run it directly from PowerShell or double-click `build/screenmate_shell.exe` in 
 ```
 
 Controls:
-- **Left click and drag**: Move the blob across your desktop.
-- **Double click**: Cycle between emotional color states (Calm, Focused, Witty, Thinking, Alert).
-- **Right click**: Open context menu to cycle emotion or exit.
+- **Left click**: Toggle speech bubble open or closed.
+- **Left click and drag**: Move the blob across your desktop (open speech bubble follows).
+- **Ctrl + Space (Global Hotkey)**: Open speech bubble from anywhere and focus text input.
+- **Enter (in input field)**: Send prompt to local AI sidecar with streaming response.
+- **Escape (in input field)**: Close speech bubble.
+- **Double click on blob**: Cycle between emotional color states (Calm, Focused, Witty, Thinking, Alert).
+- **Right click on blob**: Open context menu to cycle emotion or exit.
