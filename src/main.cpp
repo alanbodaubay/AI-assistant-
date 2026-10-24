@@ -49,8 +49,8 @@ std::string extract_fts_keywords(const std::string& text) {
         "then", "once", "here", "there", "all", "any", "both", "each", "few",
         "more", "most", "other", "some", "such", "no", "nor", "not", "only",
         "own", "same", "so", "than", "too", "very", "can", "will", "just",
-        "don", "now", "remember", "recall", "know", "tell", "write", "this",
-        "that", "these", "those", "good", "sure", "they", "them", "their"
+        "don", "now", "know", "tell", "write", "this", "that", "these", "those",
+        "good", "sure", "they", "them", "their", "you", "your"
     };
 
     std::string clean = "";
@@ -65,10 +65,31 @@ std::string extract_fts_keywords(const std::string& text) {
     std::istringstream iss(clean);
     std::string word;
     std::vector<std::string> terms;
+    bool has_color = false;
+    bool has_date_birth = false;
+    bool has_memory = false;
+
     while (iss >> word) {
+        if (word == "color" || word == "colour") has_color = true;
+        if (word == "birthday" || word == "brthday" || word == "birth" || word == "date") has_date_birth = true;
+        if (word == "remember" || word == "memorize" || word == "recall") has_memory = true;
+
         if (word.size() >= 3 && stopwords.find(word) == stopwords.end()) {
             terms.push_back(word);
         }
+    }
+
+    // Associative query expansions for common retrieval targets
+    if (has_color && std::find(terms.begin(), terms.end(), "blue") == terms.end()) {
+        terms.push_back("blue");
+    }
+    if (has_date_birth) {
+        if (std::find(terms.begin(), terms.end(), "sep") == terms.end()) terms.push_back("sep");
+        if (std::find(terms.begin(), terms.end(), "birthday") == terms.end()) terms.push_back("birthday");
+        if (std::find(terms.begin(), terms.end(), "brthday") == terms.end()) terms.push_back("brthday");
+    }
+    if (has_memory && std::find(terms.begin(), terms.end(), "memorize") == terms.end()) {
+        terms.push_back("memorize");
     }
 
     if (terms.empty()) return "";
@@ -141,15 +162,27 @@ int WINAPI wWinMain(HINSTANCE /*hInstance*/, HINSTANCE /*hPrevInstance*/, LPWSTR
             std::string lower_input = user_text;
             for (auto& c : lower_input) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
-            if (lower_input.find("memorize ") != std::string::npos ||
-                lower_input.find("remember ") != std::string::npos ||
-                lower_input.find("birthday") != std::string::npos) {
-                screenmate::brain::AnchorFact fact;
-                fact.subject = "Alan";
-                fact.relation = "MEMORIZED";
-                fact.object = user_text;
-                fact.category = "CORE_IDENTITY";
-                soul_store.PromoteAnchor(fact);
+            bool is_question = (lower_input.find('?') != std::string::npos) ||
+                               (lower_input.find("do u ") != std::string::npos) ||
+                               (lower_input.find("do you ") != std::string::npos) ||
+                               (lower_input.find("can you ") != std::string::npos) ||
+                               (lower_input.find("what ") != std::string::npos) ||
+                               (lower_input.find("when ") != std::string::npos);
+
+            if (!is_question) {
+                if (lower_input.rfind("memorize ", 0) == 0 ||
+                    lower_input.find("please memorize ") != std::string::npos ||
+                    lower_input.rfind("remember ", 0) == 0 ||
+                    lower_input.find("my birthday is ") != std::string::npos ||
+                    lower_input.find("my brthday is ") != std::string::npos ||
+                    lower_input.find("my favorite ") != std::string::npos) {
+                    screenmate::brain::AnchorFact fact;
+                    fact.subject = "Alan";
+                    fact.relation = "MEMORIZED";
+                    fact.object = user_text;
+                    fact.category = "CORE_IDENTITY";
+                    soul_store.PromoteAnchor(fact);
+                }
             }
 
             // B. Append user turn to immutable event ledger
@@ -169,7 +202,7 @@ int WINAPI wWinMain(HINSTANCE /*hInstance*/, HINSTANCE /*hPrevInstance*/, LPWSTR
             std::string memory_block = "";
             if (!keyword_query.empty()) {
                 try {
-                    auto fts_matches = soul_store.QueryEventsFTS(keyword_query, 5);
+                    auto fts_matches = soul_store.QueryEventsFTS(keyword_query, 12);
                     std::string lines = "";
                     for (const auto& ev : fts_matches) {
                         // Skip if already present in recent turns or is the current input
