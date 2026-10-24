@@ -24,7 +24,7 @@ std::string LlamaClient::complete(
 ) {
     httplib::Client cli(host_, port_);
     cli.set_connection_timeout(2, 0);
-    cli.set_read_timeout(30, 0);
+    cli.set_read_timeout(60, 0);
 
     json msg_array = json::array();
     for (const auto& m : messages) {
@@ -38,7 +38,7 @@ std::string LlamaClient::complete(
     json payload = {
         {"messages", msg_array},
         {"temperature", 0.7},
-        {"max_tokens", 150},
+        {"max_tokens", 512},
         {"stream", on_token != nullptr},
         {"id_slot", 0}, // Slot 0: real-time chat
         {"cache_prompt", true}
@@ -58,11 +58,16 @@ std::string LlamaClient::complete(
         req.content_receiver = [&](const char* data, size_t data_length, uint64_t /*offset*/, uint64_t /*total_length*/) -> bool {
             chunk_buffer.append(data, data_length);
 
-            // Parse Server-Sent Events (SSE: data: {...})
+            // Parse line-by-line supporting \n, \r\n, and SSE event blocks
             size_t pos = 0;
-            while ((pos = chunk_buffer.find("\n\n")) != std::string::npos) {
+            while ((pos = chunk_buffer.find('\n')) != std::string::npos) {
                 std::string line = chunk_buffer.substr(0, pos);
-                chunk_buffer.erase(0, pos + 2);
+                chunk_buffer.erase(0, pos + 1);
+
+                // Strip trailing CR and whitespace
+                while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) {
+                    line.pop_back();
+                }
 
                 if (line.rfind("data: ", 0) == 0) {
                     std::string json_str = line.substr(6);
@@ -72,10 +77,19 @@ std::string LlamaClient::complete(
                         auto j = json::parse(json_str);
                         if (j.contains("choices") && !j["choices"].empty()) {
                             const auto& choice = j["choices"][0];
-                            if (choice.contains("delta") && choice["delta"].contains("content")) {
-                                std::string token = choice["delta"]["content"].get<std::string>();
-                                full_response += token;
-                                on_token(token);
+                            if (choice.contains("delta")) {
+                                const auto& delta = choice["delta"];
+                                std::string token = "";
+                                if (delta.contains("content") && delta["content"].is_string()) {
+                                    token = delta["content"].get<std::string>();
+                                } else if (delta.contains("reasoning_content") && delta["reasoning_content"].is_string()) {
+                                    token = delta["reasoning_content"].get<std::string>();
+                                }
+
+                                if (!token.empty()) {
+                                    full_response += token;
+                                    on_token(token);
+                                }
                             }
                         }
                     } catch (...) {}
@@ -101,7 +115,15 @@ std::string LlamaClient::complete(
             try {
                 auto j = json::parse(res->body);
                 if (j.contains("choices") && !j["choices"].empty()) {
-                    return j["choices"][0]["message"]["content"].get<std::string>();
+                    const auto& choice = j["choices"][0];
+                    if (choice.contains("message")) {
+                        const auto& msg = choice["message"];
+                        if (msg.contains("content") && msg["content"].is_string()) {
+                            return msg["content"].get<std::string>();
+                        } else if (msg.contains("reasoning_content") && msg["reasoning_content"].is_string()) {
+                            return msg["reasoning_content"].get<std::string>();
+                        }
+                    }
                 }
             } catch (...) {}
         }

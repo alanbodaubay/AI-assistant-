@@ -79,7 +79,9 @@ echo.
     --ctx-size 8192 ^
     -np 2 ^
     -ngl 99 ^
+    --reasoning off ^
     --port 8080 ^
     --host 127.0.0.1
 
 endlocal
+

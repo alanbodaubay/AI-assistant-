@@ -56,13 +56,17 @@ int WINAPI wWinMain(HINSTANCE /*hInstance*/, HINSTANCE /*hPrevInstance*/, LPWSTR
                 "You live directly on his desktop as a glowing organic companion. "
                 "Keep answers natural, warm, thoughtful, and punchy. Avoid robotic boilerplate.";
 
-            client.simple_chat(
+            std::string full_reply = client.simple_chat(
                 system_prompt,
                 user_text,
                 [&bubble](const std::string& token) {
                     bubble.append_response_token(token);
                 }
             );
+
+            if (!full_reply.empty()) {
+                bubble.set_response_text(full_reply);
+            }
 
             blob.set_emotion(screenmate::renderer::BlobEmotion::Witty);
         }).detach();
