@@ -123,11 +123,21 @@ class SituationalMentalModel:
         """
         Serializes working state into the compact bracket prompt format (<100 tokens).
         If the estimated tokens exceed max_tokens, applies graceful truncation to entities and strings.
+        Sanitizes delimiter injections ([/STATE], <start_of_turn>, etc.).
         """
-        entities_copy = list(self.entities)
-        topic_str = self.topic
-        goal_str = self.goal
-        emotion_str = self.user_emotion
+        def sanitize(s: str) -> str:
+            if not s:
+                return ""
+            for tag in ["[STATE]", "[/STATE]", "<start_of_turn>", "<end_of_turn>"]:
+                s = s.replace(tag, "")
+            return s.strip()
+
+        entities_copy = [sanitize(e) for e in self.entities]
+        topic_str = sanitize(self.topic)
+        goal_str = sanitize(self.goal)
+        emotion_str = sanitize(self.user_emotion)
+        if len(emotion_str) > 40:
+            emotion_str = emotion_str[:37] + "..."
 
         def build_block(t: str, e: List[str], em: str, g: str) -> str:
             ent_list = ", ".join(e)
@@ -158,6 +168,11 @@ class SituationalMentalModel:
 
         if tokens > max_tokens and len(topic_str) > 40:
             topic_str = topic_str[:37] + "..."
+            block = build_block(topic_str, entities_copy, emotion_str, goal_str)
+            tokens = estimate_gemma_tokens(block)
+
+        if tokens > max_tokens and len(emotion_str) > 20:
+            emotion_str = emotion_str[:17] + "..."
             block = build_block(topic_str, entities_copy, emotion_str, goal_str)
 
         return block

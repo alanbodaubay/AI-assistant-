@@ -11,6 +11,7 @@ PRAGMA foreign_keys = ON;
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
 PRAGMA busy_timeout = 5000;
+PRAGMA recursive_triggers = ON;
 
 -- ----------------------------------------------------------------------------
 -- 1. IMMUTABLE RAW EVENT LEDGER
@@ -78,6 +79,18 @@ BEGIN
     SELECT RAISE(ABORT, 'events table is immutable');
 END;
 
+CREATE TRIGGER IF NOT EXISTS trg_events_prevent_insert_replace
+BEFORE INSERT ON events
+FOR EACH ROW
+WHEN EXISTS (
+    SELECT 1 FROM events
+    WHERE id = new.id
+       OR (new.sha256_hash IS NOT NULL AND sha256_hash = new.sha256_hash)
+)
+BEGIN
+    SELECT RAISE(ABORT, 'events table is immutable: duplicate or replace forbidden');
+END;
+
 -- ----------------------------------------------------------------------------
 -- 4. PROPERTY GRAPH: NODES (Entities, Concepts, Episodes)
 -- ----------------------------------------------------------------------------
@@ -97,9 +110,9 @@ CREATE TABLE IF NOT EXISTS nodes (
                                 'CORE_IDENTITY', 'FAMILY', 'MEDICAL',
                                 'CORE_PREFERENCE', 'PINNED', 'PROJECT_GOAL', NULL
                             )),
-    decay_rate              REAL NOT NULL DEFAULT 0.05,       -- Must be 0.0 if is_anchor = 1
-    stability               REAL NOT NULL DEFAULT 1.0,        -- Stability in days
-    stability_days          REAL NOT NULL DEFAULT 1.0,        -- Explicit stability_days alias
+    decay_rate              REAL NOT NULL DEFAULT 0.05 CHECK(decay_rate >= 0.0),       -- Must be 0.0 if is_anchor = 1
+    stability               REAL NOT NULL DEFAULT 1.0 CHECK(stability > 0.0),        -- Stability in days
+    stability_days          REAL NOT NULL DEFAULT 1.0 CHECK(stability_days > 0.0),   -- Explicit stability_days alias
     retrievability          REAL NOT NULL DEFAULT 1.0,        -- Current recall probability [0.0, 1.0]
     provisional             INTEGER NOT NULL DEFAULT 1 CHECK(provisional IN (0, 1)), -- 1 = quarantined, 0 = permanent
     first_observed_date     TEXT NULL,                        -- Date string: YYYY-MM-DD
@@ -134,15 +147,16 @@ CREATE TABLE IF NOT EXISTS edges (
     weight                  REAL NOT NULL DEFAULT 1.0 CHECK(weight >= 0.0 AND weight <= 1.0),
     confidence              REAL NOT NULL DEFAULT 1.0 CHECK(confidence >= 0.0 AND confidence <= 1.0),
     is_anchor               INTEGER NOT NULL DEFAULT 0 CHECK(is_anchor IN (0, 1)),
-    decay_rate              REAL NOT NULL DEFAULT 0.05,       -- Must be 0.0 if is_anchor = 1
-    stability               REAL NOT NULL DEFAULT 1.0,        -- Stability in days
-    stability_days          REAL NOT NULL DEFAULT 1.0,        -- Explicit stability_days alias
+    decay_rate              REAL NOT NULL DEFAULT 0.05 CHECK(decay_rate >= 0.0),       -- Must be 0.0 if is_anchor = 1
+    stability               REAL NOT NULL DEFAULT 1.0 CHECK(stability > 0.0),        -- Stability in days
+    stability_days          REAL NOT NULL DEFAULT 1.0 CHECK(stability_days > 0.0),   -- Explicit stability_days alias
     valid_from              INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000), -- Epoch ms
     valid_until             INTEGER DEFAULT NULL,             -- Epoch ms (NULL = active)
     is_active               INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
     provisional             INTEGER NOT NULL DEFAULT 1 CHECK(provisional IN (0, 1)), -- 1 = quarantined, 0 = permanent
     source_event_id         INTEGER REFERENCES events(id) ON DELETE SET NULL,
-    created_at              INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000)
+    created_at              INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
+    CHECK (valid_until IS NULL OR valid_until >= valid_from)
 );
 
 -- Indices for edges
@@ -213,6 +227,24 @@ BEGIN
         WHEN new.provisional != 0 THEN
             RAISE(ABORT, 'Anchor edge cannot remain in provisional quarantine')
     END;
+END;
+
+-- Trigger: prevent demoting an anchor node to non-anchor
+CREATE TRIGGER IF NOT EXISTS trg_nodes_prevent_anchor_demotion
+BEFORE UPDATE OF is_anchor ON nodes
+FOR EACH ROW
+WHEN old.is_anchor = 1 AND new.is_anchor = 0
+BEGIN
+    SELECT RAISE(ABORT, 'Anchor nodes cannot be demoted to non-anchor');
+END;
+
+-- Trigger: prevent demoting an anchor edge to non-anchor
+CREATE TRIGGER IF NOT EXISTS trg_edges_prevent_anchor_demotion
+BEFORE UPDATE OF is_anchor ON edges
+FOR EACH ROW
+WHEN old.is_anchor = 1 AND new.is_anchor = 0
+BEGIN
+    SELECT RAISE(ABORT, 'Anchor edges cannot be demoted to non-anchor');
 END;
 
 -- ----------------------------------------------------------------------------
@@ -378,7 +410,9 @@ SELECT
 FROM quarantine
 WHERE status = 'provisional' 
   AND distinct_calendar_days >= 2 
-  AND (last_seen_timestamp - first_seen_timestamp) >= 129600000;
+  AND (last_seen_timestamp - first_seen_timestamp) >= 129600000
+  AND observation_count >= 2
+  AND confidence >= 0.70;
 
 -- View 3: Complete active property graph traversal
 CREATE VIEW IF NOT EXISTS v_active_graph AS

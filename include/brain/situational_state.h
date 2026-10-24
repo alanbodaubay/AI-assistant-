@@ -129,6 +129,53 @@ inline std::vector<std::string> ExtractJsonStringArray(const std::string& json, 
     return result;
 }
 
+/// Codepoint-safe UTF-8 string truncation avoiding slicing multi-byte characters
+inline std::string TruncateUtf8Safe(const std::string& str, size_t max_bytes, const std::string& suffix = "...") {
+    if (str.size() <= max_bytes) {
+        return str;
+    }
+    size_t target_len = (max_bytes > suffix.size()) ? (max_bytes - suffix.size()) : max_bytes;
+    if (target_len >= str.size()) {
+        return str;
+    }
+    size_t cut_pos = target_len;
+    while (cut_pos > 0 && (static_cast<unsigned char>(str[cut_pos]) & 0xC0) == 0x80) {
+        --cut_pos;
+    }
+    if (cut_pos < target_len) {
+        unsigned char lead = static_cast<unsigned char>(str[cut_pos]);
+        size_t needed = 1;
+        if ((lead & 0xE0) == 0xC0) needed = 2;
+        else if ((lead & 0xF0) == 0xE0) needed = 3;
+        else if ((lead & 0xF8) == 0xF0) needed = 4;
+        
+        if (cut_pos + needed <= target_len) {
+            cut_pos += needed;
+        }
+    }
+    return str.substr(0, cut_pos) + suffix;
+}
+
+/// Sanitizes prompt delimiters and system instruction tokens to prevent envelope injection
+inline std::string SanitizePromptField(const std::string& input) {
+    std::string s = input;
+    const std::vector<std::string> forbidden = {
+        "[/STATE]", "[STATE]", "<start_of_turn>", "<end_of_turn>"
+    };
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (const auto& token : forbidden) {
+            size_t pos = 0;
+            while ((pos = s.find(token, pos)) != std::string::npos) {
+                s.erase(pos, token.size());
+                changed = true;
+            }
+        }
+    }
+    return s;
+}
+
 } // namespace detail
 
 /**
@@ -255,26 +302,26 @@ struct SituationalState {
         std::ostringstream ss;
         ss << "[STATE]\n";
         if (!active_topic.empty()) {
-            ss << "topic: " << active_topic << "\n";
+            ss << "topic: " << detail::SanitizePromptField(active_topic) << "\n";
         }
         if (!focal_entities.empty()) {
             ss << "entities: [";
             for (size_t i = 0; i < focal_entities.size(); ++i) {
-                ss << focal_entities[i];
+                ss << detail::SanitizePromptField(focal_entities[i]);
                 if (i + 1 < focal_entities.size()) ss << ", ";
             }
             ss << "]\n";
         }
         if (!user_emotion.empty()) {
-            ss << "user_emotion: " << user_emotion << "\n";
+            ss << "user_emotion: " << detail::SanitizePromptField(user_emotion) << "\n";
         }
         if (!ongoing_goal.empty()) {
-            ss << "goal: " << ongoing_goal << "\n";
+            ss << "goal: " << detail::SanitizePromptField(ongoing_goal) << "\n";
         }
         ss << "persona: {aff:" << std::fixed << std::setprecision(2) << affinity
            << ", snark:" << snark << ", energy:" << energy << "}\n";
         if (!active_anchor_fact.empty()) {
-            ss << "anchor: " << active_anchor_fact << "\n";
+            ss << "anchor: " << detail::SanitizePromptField(active_anchor_fact) << "\n";
         }
         ss << "[/STATE]";
         return ss.str();
@@ -329,19 +376,46 @@ struct SituationalState {
 
     /**
      * @brief Ensures state fits within token budget by pruning least-recent entities or trimming fields.
-     * Implements graceful cognitive degradation under high entity volume.
+     * Implements graceful cognitive degradation under high entity volume and adversarial payloads.
      */
     void TruncateToFitBudget(size_t target_max_tokens = 95) {
+        // Preemptive clamp for pathological inputs
+        if (user_emotion.size() > 30) {
+            user_emotion = detail::TruncateUtf8Safe(user_emotion, 30, "");
+        }
+        if (focal_entities.size() == 1 && focal_entities[0].size() > 30) {
+            focal_entities[0] = detail::TruncateUtf8Safe(focal_entities[0], 30, "...");
+        }
+
         while (!ValidateTokenBudget() || EstimateTokenCount() > target_max_tokens) {
             if (focal_entities.size() > 1) {
                 // Prune the oldest focal entity
                 focal_entities.erase(focal_entities.begin());
             } else if (!active_anchor_fact.empty()) {
                 active_anchor_fact.clear();
+            } else if (focal_entities.size() == 1) {
+                // If single entity exceeds 30 chars, truncate to 30 chars, else drop
+                if (focal_entities[0].size() > 30) {
+                    focal_entities[0] = detail::TruncateUtf8Safe(focal_entities[0], 30, "...");
+                } else {
+                    focal_entities.clear();
+                }
             } else if (ongoing_goal.size() > 30) {
-                ongoing_goal = ongoing_goal.substr(0, 27) + "...";
+                ongoing_goal = detail::TruncateUtf8Safe(ongoing_goal, 30, "...");
             } else if (active_topic.size() > 30) {
-                active_topic = active_topic.substr(0, 27) + "...";
+                active_topic = detail::TruncateUtf8Safe(active_topic, 30, "...");
+            } else if (user_emotion.size() > 30) {
+                user_emotion = detail::TruncateUtf8Safe(user_emotion, 30, "");
+            } else if (user_emotion.size() > 15) {
+                user_emotion = detail::TruncateUtf8Safe(user_emotion, 15, "");
+            } else if (!user_emotion.empty() && user_emotion != "neutral") {
+                user_emotion = "neutral";
+            } else if (ongoing_goal.size() > 15) {
+                ongoing_goal = detail::TruncateUtf8Safe(ongoing_goal, 15, "...");
+            } else if (!ongoing_goal.empty()) {
+                ongoing_goal.clear();
+            } else if (active_topic.size() > 15) {
+                active_topic = detail::TruncateUtf8Safe(active_topic, 15, "...");
             } else {
                 break;
             }
