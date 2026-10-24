@@ -5,6 +5,12 @@
 #include <chrono>
 #include <thread>
 #include <vector>
+#include <string>
+#include <sstream>
+#include <unordered_set>
+#include <filesystem>
+#include <algorithm>
+#include <cctype>
 #include "ui/blob_window.h"
 #include "ui/bubble_window.h"
 #include "brain/llama_client.h"
@@ -13,11 +19,74 @@
 
 namespace {
 constexpr int HOTKEY_ID = 100;
+
+std::string resolve_database_path() {
+    if (std::filesystem::exists("data/soul.db")) {
+        return "data/soul.db";
+    }
+    if (std::filesystem::exists("../data/soul.db")) {
+        return "../data/soul.db";
+    }
+    // Fallback relative to executable directory
+    wchar_t exe_path[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, exe_path, MAX_PATH);
+    std::filesystem::path p(exe_path);
+    std::filesystem::path candidate = p.parent_path() / "data" / "soul.db";
+    if (std::filesystem::exists(candidate)) {
+        return candidate.string();
+    }
+    return "data/soul.db";
 }
 
+std::string extract_fts_keywords(const std::string& text) {
+    static const std::unordered_set<std::string> stopwords = {
+        "what", "when", "where", "which", "who", "whom", "whose", "why", "how",
+        "does", "doing", "would", "should", "could", "have", "has", "had",
+        "the", "and", "but", "if", "or", "because", "as", "until", "while",
+        "of", "at", "by", "for", "with", "about", "against", "between", "into",
+        "through", "during", "before", "after", "above", "below", "to", "from",
+        "up", "down", "in", "out", "on", "off", "over", "under", "again", "further",
+        "then", "once", "here", "there", "all", "any", "both", "each", "few",
+        "more", "most", "other", "some", "such", "no", "nor", "not", "only",
+        "own", "same", "so", "than", "too", "very", "can", "will", "just",
+        "don", "now", "remember", "recall", "know", "tell", "write", "this",
+        "that", "these", "those", "good", "sure", "they", "them", "their"
+    };
+
+    std::string clean = "";
+    for (char c : text) {
+        if (std::isalnum(static_cast<unsigned char>(c))) {
+            clean += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        } else {
+            clean += ' ';
+        }
+    }
+
+    std::istringstream iss(clean);
+    std::string word;
+    std::vector<std::string> terms;
+    while (iss >> word) {
+        if (word.size() >= 3 && stopwords.find(word) == stopwords.end()) {
+            terms.push_back(word);
+        }
+    }
+
+    if (terms.empty()) return "";
+
+    std::string query_str = "";
+    for (size_t i = 0; i < terms.size(); ++i) {
+        query_str += terms[i];
+        if (i + 1 < terms.size()) query_str += " OR ";
+    }
+    return query_str;
+}
+
+} // namespace
+
 int WINAPI wWinMain(HINSTANCE /*hInstance*/, HINSTANCE /*hPrevInstance*/, LPWSTR /*lpCmdLine*/, int /*nCmdShow*/) {
-    // 0. Initialize the Soul SQLite Memory Engine (Phase 3)
-    screenmate::brain::SoulStore soul_store("data/soul.db");
+    // 0. Initialize the Soul SQLite Memory Engine
+    std::string db_file = resolve_database_path();
+    screenmate::brain::SoulStore soul_store(db_file);
 
     // Seed baseline anchor memory if database is newly created
     if (soul_store.GetActiveAnchors().empty()) {
@@ -63,20 +132,69 @@ int WINAPI wWinMain(HINSTANCE /*hInstance*/, HINSTANCE /*hPrevInstance*/, LPWSTR
         }
     });
 
-    // 5. Wire Speech Bubble input: Multi-turn Memory & Inference via SoulStore + LlamaClient
+    // 5. Wire Speech Bubble input: Multi-turn Context + FTS5 Long-Term Memory Recall
     bubble.set_on_submit([&blob, &bubble, &soul_store](const std::string& user_text) {
         blob.set_emotion(screenmate::renderer::BlobEmotion::Thinking);
 
         std::thread([&blob, &bubble, &soul_store, user_text]() {
-            // A. Append user message to immutable event ledger
+            // A. Check for explicit memorization imperatives ("memorize X", "my birthday is X")
+            std::string lower_input = user_text;
+            for (auto& c : lower_input) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+            if (lower_input.find("memorize ") != std::string::npos ||
+                lower_input.find("remember ") != std::string::npos ||
+                lower_input.find("birthday") != std::string::npos) {
+                screenmate::brain::AnchorFact fact;
+                fact.subject = "Alan";
+                fact.relation = "MEMORIZED";
+                fact.object = user_text;
+                fact.category = "CORE_IDENTITY";
+                soul_store.PromoteAnchor(fact);
+            }
+
+            // B. Append user turn to immutable event ledger
             soul_store.AppendEvent({
                 0, "default", 0, "USER_CHAT", user_text, "{}", "", false, 0
             });
 
-            // B. Fetch previous conversation turns for multi-turn conversational continuity
+            // C. Fetch recent conversation turns (sliding window)
             auto past_turns = soul_store.GetRecentChatTurns(6);
+            std::unordered_set<int64_t> recent_ids;
+            for (const auto& t : past_turns) {
+                recent_ids.insert(t.id);
+            }
 
-            // C. Retrieve or initialize the Situational Working State (<100 tokens)
+            // D. Associative Long-Term Memory Recall via FTS5 BM25
+            std::string keyword_query = extract_fts_keywords(user_text);
+            std::string memory_block = "";
+            if (!keyword_query.empty()) {
+                try {
+                    auto fts_matches = soul_store.QueryEventsFTS(keyword_query, 5);
+                    std::string lines = "";
+                    for (const auto& ev : fts_matches) {
+                        // Skip if already present in recent turns or is the current input
+                        if (recent_ids.find(ev.id) == recent_ids.end() && ev.raw_payload != user_text) {
+                            lines += "- " + (ev.source == "USER_CHAT" ? std::string("Alan previously said: ") : std::string("Companion previously said: ")) + "\"" + ev.raw_payload + "\"\n";
+                        }
+                    }
+                    if (!lines.empty()) {
+                        memory_block = "\n[RECALLED PAST MEMORIES FROM ARCHIVES]\n" + lines + "[/RECALLED PAST MEMORIES FROM ARCHIVES]\n";
+                    }
+                } catch (...) {}
+            }
+
+            // E. Active Anchor Facts
+            auto anchors = soul_store.GetActiveAnchors();
+            std::string anchor_block = "";
+            if (!anchors.empty()) {
+                anchor_block = "\n[CONFIRMED FACTS ABOUT ALAN]\n";
+                for (const auto& a : anchors) {
+                    anchor_block += "- " + a.subject + " " + a.relation + ": " + a.object + "\n";
+                }
+                anchor_block += "[/CONFIRMED FACTS ABOUT ALAN]\n";
+            }
+
+            // F. Situational Working State Snapshot
             auto opt_state = soul_store.GetLatestSituationalSnapshot("default");
             screenmate::brain::SituationalState state;
             if (opt_state) {
@@ -90,18 +208,19 @@ int WINAPI wWinMain(HINSTANCE /*hInstance*/, HINSTANCE /*hPrevInstance*/, LPWSTR
                 state.energy = 0.70f;
             }
 
-            // Build system prompt with Situational Mental Model delta
+            // G. Assemble System Prompt with Anchors, Recalled Memories, and Situational Delta
             std::string system_prompt =
                 "You are ScreenMate, an intelligent, concise, witty personal companion and friend to Alan. "
                 "You live directly on his desktop as a glowing organic companion. "
                 "Keep answers natural, warm, thoughtful, and punchy. Aim for 2-4 sentences max unless explicitly asked for detail.\n" +
+                anchor_block +
+                memory_block +
                 state.ToPromptDelta();
 
             std::vector<screenmate::brain::ChatMessage> messages;
             messages.push_back({"system", system_prompt});
 
             for (const auto& turn : past_turns) {
-                // Avoid duplicating the turn just appended
                 if (turn.raw_payload == user_text) continue;
                 if (turn.source == "USER_CHAT" || turn.source == "user") {
                     messages.push_back({"user", turn.raw_payload});
@@ -111,7 +230,7 @@ int WINAPI wWinMain(HINSTANCE /*hInstance*/, HINSTANCE /*hPrevInstance*/, LPWSTR
             }
             messages.push_back({"user", user_text});
 
-            // D. Stream response from local inference sidecar
+            // H. Stream response from local inference sidecar
             screenmate::brain::LlamaClient client;
             std::string full_reply = client.complete(
                 messages,
@@ -123,7 +242,7 @@ int WINAPI wWinMain(HINSTANCE /*hInstance*/, HINSTANCE /*hPrevInstance*/, LPWSTR
             if (!full_reply.empty()) {
                 bubble.set_response_text(full_reply);
 
-                // E. Append companion reply to immutable ledger
+                // I. Append companion reply to immutable ledger
                 soul_store.AppendEvent({
                     0, "default", 0, "COMPANION_CHAT", full_reply, "{}", "", false, 0
                 });

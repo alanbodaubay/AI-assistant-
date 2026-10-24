@@ -122,3 +122,4 @@ int main() {
     std::cout << "[ScreenMate Test] PASS: All SoulStore invariants and operations verified successfully." << std::endl;
     return 0;
 }
+
