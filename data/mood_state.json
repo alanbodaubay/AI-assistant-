@@ -1,0 +1,9 @@
+{
+  "affinity": 0.20,
+  "snark": 0.65,
+  "energy": 0.75,
+  "curiosity": 0.80,
+  "friendship_stage": "acquaintance_buddy",
+  "consecutive_days_seen": 1,
+  "last_interaction_timestamp": 0
+}

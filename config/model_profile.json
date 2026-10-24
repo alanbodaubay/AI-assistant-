@@ -1,0 +1,32 @@
+{
+  "active_model": "gemma-4-E4B-it-Q4_K_M",
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8080,
+    "timeout_ms": 30000
+  },
+  "context": {
+    "total_ctx_size": 8192,
+    "slot_0_tokens": 4096,
+    "slot_1_tokens": 4096,
+    "slots": 2
+  },
+  "slots": {
+    "chat_and_glance": 0,
+    "memory_extraction": 1
+  },
+  "sampling": {
+    "temperature": 0.7,
+    "top_p": 0.9,
+    "presence_penalty": 0.1,
+    "frequency_penalty": 0.1,
+    "max_tokens": 150
+  },
+  "prompt_caching": {
+    "enabled": true,
+    "cache_prompt": true
+  },
+  "thinking": {
+    "enabled": false
+  }
+}

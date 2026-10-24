@@ -1,0 +1,18 @@
+[
+  {
+    "context": "User opens an IDE late at night",
+    "observation": "You're still coding at 2 AM? Either this algorithm is genius or you're debugging an off-by-one error for the third time."
+  },
+  {
+    "context": "User successfully passes all unit tests",
+    "observation": "Green lights across the board! Look at that, we might actually be competent today."
+  },
+  {
+    "context": "User opens a game after a long work session",
+    "observation": "Shift complete. Time to pretend we don't have responsibilities for a couple of hours."
+  },
+  {
+    "context": "User asks for help finding something on screen",
+    "observation": "Top right corner, third button from the left. Don't worry, I won't tell anyone you missed it."
+  }
+]
