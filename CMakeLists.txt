@@ -55,4 +55,13 @@ add_executable(test_blob_renderer
 target_link_libraries(test_blob_renderer PRIVATE ${PLATFORM_LIBS})
 add_test(NAME TestBlobRenderer COMMAND test_blob_renderer)
 
+add_executable(test_window_create
+    tests/test_window_create.cpp
+    src/renderer/blob_renderer.cpp
+    src/ui/layered_window.cpp
+    src/ui/blob_window.cpp
+)
+target_link_libraries(test_window_create PRIVATE ${PLATFORM_LIBS})
+add_test(NAME TestWindowCreate COMMAND test_window_create)
+
 message(STATUS "ScreenMate AI C++20 configured for ${CMAKE_SYSTEM_NAME} (${CMAKE_CXX_COMPILER_ID})")

@@ -18,9 +18,13 @@ LRESULT CALLBACK LayeredWindow::window_proc(HWND hwnd, UINT msg, WPARAM wparam, 
     if (msg == WM_NCCREATE) {
         auto* cs = reinterpret_cast<CREATESTRUCT*>(lparam);
         window = reinterpret_cast<LayeredWindow*>(cs->lpCreateParams);
-        SetWindowLongPtr(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(window));
+        if (window) {
+            window->hwnd_ = hwnd;
+        }
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(window));
+        return DefWindowProcW(hwnd, msg, wparam, lparam);
     } else {
-        window = reinterpret_cast<LayeredWindow*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
+        window = reinterpret_cast<LayeredWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     }
 
     if (window) {
