@@ -42,3 +42,4 @@ private:
 };
 
 } // namespace screenmate::renderer
+

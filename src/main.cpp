@@ -14,6 +14,8 @@ int WINAPI wWinMain(HINSTANCE /*hInstance*/, HINSTANCE /*hPrevInstance*/, LPWSTR
         return 1;
     }
 
+    // Render first frame so layered window has valid alpha pixels before display
+    blob.update_frame(0.0);
     blob.show();
 
     auto start_time = std::chrono::steady_clock::now();
@@ -50,3 +52,4 @@ int WINAPI wWinMain(HINSTANCE /*hInstance*/, HINSTANCE /*hPrevInstance*/, LPWSTR
 int main() {
     return wWinMain(GetModuleHandleW(nullptr), nullptr, nullptr, SW_SHOW);
 }
+

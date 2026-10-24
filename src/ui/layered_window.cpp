@@ -114,7 +114,8 @@ void LayeredWindow::release_memory_dc() {
 
 void LayeredWindow::show() {
     if (hwnd_) {
-        ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+        SetWindowPos(hwnd_, HWND_TOPMOST, x_, y_, width_, height_, SWP_SHOWWINDOW);
+        UpdateWindow(hwnd_);
     }
 }
 
@@ -157,9 +158,10 @@ bool LayeredWindow::present(const renderer::BgraBuffer& buffer) {
     blend.SourceConstantAlpha = 255;
     blend.AlphaFormat = AC_SRC_ALPHA; // Premultiplied per-pixel alpha
 
+    HDC screen_dc = GetDC(nullptr);
     BOOL ok = UpdateLayeredWindow(
         hwnd_,
-        nullptr,
+        screen_dc,
         &pt_dst,
         &size_wnd,
         hdc_mem_,
@@ -168,6 +170,7 @@ bool LayeredWindow::present(const renderer::BgraBuffer& buffer) {
         &blend,
         ULW_ALPHA
     );
+    ReleaseDC(nullptr, screen_dc);
 
     return ok == TRUE;
 }
@@ -200,3 +203,4 @@ LRESULT LayeredWindow::handle_message(UINT msg, WPARAM wparam, LPARAM lparam) {
 }
 
 } // namespace screenmate::ui
+

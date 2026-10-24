@@ -96,3 +96,4 @@ private:
 };
 
 } // namespace screenmate::renderer
+

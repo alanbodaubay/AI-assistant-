@@ -74,3 +74,4 @@ LRESULT BlobWindow::handle_message(UINT msg, WPARAM wparam, LPARAM lparam) {
 }
 
 } // namespace screenmate::ui
+

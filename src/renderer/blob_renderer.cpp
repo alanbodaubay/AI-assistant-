@@ -109,3 +109,4 @@ void BlobRenderer::render(BgraBuffer& buffer, double time_seconds, BlobEmotion e
 }
 
 } // namespace screenmate::renderer
+

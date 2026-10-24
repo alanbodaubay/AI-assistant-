@@ -25,3 +25,4 @@ private:
 };
 
 } // namespace screenmate::ui
+
