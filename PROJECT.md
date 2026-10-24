@@ -91,11 +91,11 @@ Every feature identified during the Survey phase is mapped to an assigned milest
 
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| 1 | SQLite Storage Layer & DDL | Complete SQLite schemas (`data/soul_schema.sql`), append-only immutable `events` ledger, FTS5 sync triggers, bi-temporal `nodes`/`edges`, `quarantine`, `daily_reflections`, and integrity triggers | None | PLANNED |
-| 2 | Mathematical Fact Engine | Formal mathematical specifications: modified Ebbinghaus decay $R(t)$, zero-decay anchor invariants, FSRS stability growth $S_{n+1}$, composite scoring $A(f)$, explicit bypass logic, and 2-day quarantine math | M1 | PLANNED |
-| 3 | Cognitive Working Memory | Situational Mental Model tokenomics (<100 tokens), llama-server dual-slot (`-np 2`) architecture, byte-stable persona prefix KV-cache reuse, streaming delta turn protocol, context-shift handling, and latency proof (<500ms TTFT) | M1, M2 | PLANNED |
-| 4 | Consolidation & Hardware Feasibility | Sleep consolidation state machine, RTX 4060 8GB VRAM allocation budget (4.67 GB committed, 3.52 GB free), 1:2 thermal duty cycle & throttling policy, and abstract C++20 `IBrain`, `IConsolidator`, and `ISoulStore` interfaces in `include/brain/` | M1, M2, M3 | PLANNED |
-| 5 | Adversarial Roast, Failure Modes & Blueprint | Complete adversarial roast, 8-point failure mode defense matrix, complete integration of all previous milestones into the definitive `docs/BRAIN_SPEC.md`, and passing 100% of E2E verification tests | M1, M2, M3, M4 | PLANNED |
+| 1 | SQLite Storage Layer & DDL | Complete SQLite schemas (`data/soul_schema.sql`), append-only immutable `events` ledger, FTS5 sync triggers, bi-temporal `nodes`/`edges`, `quarantine`, `daily_reflections`, and integrity triggers | None | DONE |
+| 2 | Mathematical Fact Engine | Formal mathematical specifications: modified Ebbinghaus decay $R(t)$, zero-decay anchor invariants, FSRS stability growth $S_{n+1}$, composite scoring $A(f)$, explicit bypass logic, and 2-day quarantine math | M1 | DONE |
+| 3 | Cognitive Working Memory | Situational Mental Model tokenomics (<100 tokens), llama-server dual-slot (`-np 2`) architecture, byte-stable persona prefix KV-cache reuse, streaming delta turn protocol, context-shift handling, and latency proof (<500ms TTFT) | M1, M2 | DONE |
+| 4 | Consolidation & Hardware Feasibility | Sleep consolidation state machine, RTX 4060 8GB VRAM allocation budget (4.67 GB committed, 3.52 GB free), 1:2 thermal duty cycle & throttling policy, and abstract C++20 `IBrain`, `IConsolidator`, and `ISoulStore` interfaces in `include/brain/` | M1, M2, M3 | DONE |
+| 5 | Adversarial Roast, Failure Modes & Blueprint | Complete adversarial roast, 8-point failure mode defense matrix, complete integration of all previous milestones into the definitive `docs/BRAIN_SPEC.md`, and passing 100% of E2E verification tests | M1, M2, M3, M4 | DONE |
 
 ---
 
