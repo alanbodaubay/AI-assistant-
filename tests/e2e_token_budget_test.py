@@ -177,6 +177,55 @@ class SituationalMentalModel:
 
         return block
 
+    def truncate_to_fit_budget(self, max_tokens: int = 95) -> None:
+        """
+        In-place working memory budget enforcement matching C++ SituationalState::TruncateToFitBudget.
+        Prunes entities, clamps user_emotion, and truncates goal/topic.
+        """
+        def sanitize(s: str) -> str:
+            if not s:
+                return ""
+            for tag in ["[STATE]", "[/STATE]", "<start_of_turn>", "<end_of_turn>"]:
+                s = s.replace(tag, "")
+            return s.strip()
+
+        self.topic = sanitize(self.topic)
+        self.goal = sanitize(self.goal)
+        self.user_emotion = sanitize(self.user_emotion)
+        self.entities = [sanitize(e) for e in self.entities]
+
+        if len(self.user_emotion) > 30:
+            self.user_emotion = self.user_emotion[:30]
+        if len(self.entities) == 1 and len(self.entities[0]) > 30:
+            self.entities[0] = self.entities[0][:27] + "..."
+
+        while estimate_gemma_tokens(self.serialize_prompt_block(max_tokens=999)) > max_tokens:
+            if len(self.entities) > 1:
+                self.entities.pop(0)
+            elif len(self.entities) == 1:
+                if len(self.entities[0]) > 30:
+                    self.entities[0] = self.entities[0][:27] + "..."
+                else:
+                    self.entities.clear()
+            elif len(self.goal) > 30:
+                self.goal = self.goal[:27] + "..."
+            elif len(self.topic) > 30:
+                self.topic = self.topic[:27] + "..."
+            elif len(self.user_emotion) > 30:
+                self.user_emotion = self.user_emotion[:30]
+            elif len(self.user_emotion) > 15:
+                self.user_emotion = self.user_emotion[:15]
+            elif self.user_emotion and self.user_emotion != "neutral":
+                self.user_emotion = "neutral"
+            elif len(self.goal) > 15:
+                self.goal = self.goal[:15] + "..."
+            elif self.goal:
+                self.goal = ""
+            elif len(self.topic) > 15:
+                self.topic = self.topic[:15] + "..."
+            else:
+                break
+
     def to_json_dict(self) -> Dict[str, Any]:
         return {
             "topic": self.topic,

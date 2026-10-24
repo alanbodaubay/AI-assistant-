@@ -306,6 +306,10 @@ public:
 
     /**
      * @brief Begins a SQLite transaction (WAL mode).
+     *
+     * In SQLite WAL mode with concurrent writers (Slot 0 interactive turns & Slot 1 consolidation),
+     * all write transactions MUST execute `BEGIN IMMEDIATE` to acquire the RESERVED lock immediately,
+     * preventing SQLITE_BUSY deadlocks and priority inversion.
      */
     virtual bool BeginTransaction() = 0;
 

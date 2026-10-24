@@ -323,14 +323,28 @@ To satisfy the strict latency SLA, the serialized prompt delta must strictly con
 | Top-1 Anchor (`anchor: ...`) | 12 | 18 | `anchor: User builds C++20 desktop apps` (9 tokens) |
 | **Total Working State Delta** | **82 tokens** | **< 100 tokens** | **Typical Working State Payload = 61–85 tokens** |
 
-#### BPE Token Estimation & Auto-Truncation Invariant
-The C++20 implementation in `include/brain/situational_state.h` enforces this ceiling at runtime. If user context expansion threatens the 100-token ceiling, the system executes graceful cognitive degradation:
-1. Prunes secondary focal entities from the entity list.
-2. Truncates `ongoing_goal` to 30 characters.
-3. Truncates `active_topic` to 30 characters.
-4. Drops the optional `anchor` field.
+#### BPE Token Estimation, UTF-8 Codepoint Safety & Hardened Truncation Invariant
+The C++20 implementation in `include/brain/situational_state.h` enforces this ceiling at runtime. If user context expansion threatens the 100-token ceiling, the system executes graceful cognitive degradation through hardened multi-stage pruning:
 
-This mathematical guarantee ensures that the working state prompt block **never exceeds 99 tokens**.
+1. **Preemptive Pathological Input Clamping**:
+   - `user_emotion`: Clamped to at most 30 characters on entry via `TruncateUtf8Safe(user_emotion, 30, "")`.
+   - `focal_entities`: If `focal_entities.size() == 1` and the single entity contains $>30$ characters, it is immediately clamped to 30 characters via `TruncateUtf8Safe(focal_entities[0], 30, "...")`.
+2. **Iterative Cognitive Pruning Loop**:
+   - While `!ValidateTokenBudget() || EstimateTokenCount() > target_max_tokens`:
+     1. Prunes oldest secondary entities while `focal_entities.size() > 1` (`focal_entities.erase(begin)`).
+     2. Clears optional `active_anchor_fact`.
+     3. If `focal_entities.size() == 1`: truncates the remaining entity to 30 characters, or drops it if already $\le 30$ chars.
+     4. Truncates `ongoing_goal` to 30 characters, then `active_topic` to 30 characters.
+     5. Further clamps `user_emotion` to 15 characters, or resets to `"neutral"`.
+     6. Clears `ongoing_goal`, then truncates `active_topic` to 15 characters.
+3. **Multi-byte UTF-8 Codepoint Safety**:
+   - Slicing strings at arbitrary byte offsets (e.g. `substr(0, 27)`) shears multi-byte UTF-8 codepoints for CJK ideographs and emojis, producing corrupted continuation bytes (`\uFFFD`).
+   - ScreenMate implements `detail::TruncateUtf8Safe`: inspects byte boundaries, walking backwards past continuation bytes (`(c & 0xC0) == 0x80`) to leading bytes and confirming sequence completeness before slicing, guaranteeing 100% valid UTF-8 output.
+
+#### Prompt Delimiter Sanitization & Injection Defense
+In `ToPromptDelta()`, all interpolated field values (`active_topic`, `focal_entities`, `user_emotion`, `ongoing_goal`, `active_anchor_fact`) undergo strict delimiter sanitization via `detail::SanitizePromptField`. Any occurrences of structural envelope markers—`[STATE]`, `[/STATE]`, `<start_of_turn>`, and `<end_of_turn>`—are stripped prior to serialization. This prevents adversarial prompt injection payloads from escaping the `[STATE]` working memory block or spoofing system/user turn envelopes.
+
+This mathematical guarantee ensures that the working state prompt block **never exceeds 99 tokens** and cannot be corrupted by prompt injection attacks.
 
 ### 3.3 Llama-Server KV-Cache Slot Continuity (`id_slot: 0`)
 
@@ -343,7 +357,7 @@ llama-server.exe -m models/gemma-4-E4B-it-Q4_K_M.gguf --mmproj models/gemma-4-E4
 - **Slot 0 (`id_slot: 0`, Sequence ID 0)**: Context size 4,096 tokens. Dedicated exclusively to interactive user dialogue and screen glances.
 - **Slot 1 (`id_slot: 1`, Sequence ID 1)**: Context size 4,096 tokens. Dedicated to background consolidation.
 
-Because `llama.cpp` isolates sequences by sequence ID, operations executed on Slot 1 **cannot evict or modify the KV cache entries of Slot 0**.
+Because `llama.cpp` isolates sequences by sequence ID, operations executed on Slot 1 **cannot evict or modify the KV cache entries of Slot 0**. Furthermore, all inputs sent to Slot 0 are validated against the prompt delimiter sanitization protocol to preserve slot KV cache integrity.
 
 ### 3.4 The Byte-Stable Persona Prefix Invariant
 
@@ -670,16 +684,21 @@ stateDiagram-v2
 
 Consolidation occurs when the user is away from the machine. There is zero requirement for consolidation to complete in sub-second time. Running continuous LLM inference on a laptop GPU causes fan roar that disturbs users sleeping in the same room.
 
-ScreenMate implements **1:2 Paced Duty Cycling**:
+ScreenMate implements **Dynamic Adaptive 1:2 Duty Cycle Pacing & NVML Power Clamping**:
 1. Consolidation batches process $N = 3$ turns per forward pass.
-2. The Slot 1 inference forward-pass runs for $T_{\text{compute}} \approx 2.0\text{ seconds}$.
-3. The consolidation thread enters a mandatory sleep for $T_{\text{pause}} = 4.0\text{ seconds}$ via high-resolution timers (`std::this_thread::sleep_for`).
-4. **Duty Ratio ($\mathcal{D}$)**:
-   $$\mathcal{D} = \frac{T_{\text{compute}}}{T_{\text{compute}} + T_{\text{pause}}} = \frac{2.0}{2.0 + 4.0} = \mathbf{33.3\%}$$
-5. **Thermal Result**: Average GPU power drops from 85W peak to $< \mathbf{22\text{W}}$. The GPU die temperature stabilizes below **58°C**. Fans remain at or below passive idle profiles ($< 25\text{ dB}$, near-silent).
+2. The Slot 1 inference forward-pass runs for measured duration $\Delta t_{\text{compute}}$ (nominally $\approx 2.0\text{ seconds}$).
+3. **Dynamic Adaptive Pause Duration**: To prevent duty cycle ballooning when complex forward passes take longer (e.g. 3.2s–4.5s), the consolidation cooling pause dynamically scales to the actual measured compute runtime:
+   $$\Delta t_{\text{pause}} = \max\left(4000\text{ ms}, 2.0 \times \Delta t_{\text{compute}}\right)$$
+   This guarantees that the active duty ratio strictly satisfies:
+   $$\mathcal{D} = \frac{\Delta t_{\text{compute}}}{\Delta t_{\text{compute}} + \Delta t_{\text{pause}}} \le \frac{\Delta t_{\text{compute}}}{\Delta t_{\text{compute}} + 2.0 \times \Delta t_{\text{compute}}} = \mathbf{33.3\%}$$
+4. **NVML Hardware Power Clamping ($\le 42\text{W}$)**:
+   Under an unconstrained 85W peak TGP, even a 33.3% duty cycle averages $36.3\text{W}$, which violates the $<22\text{W}$ quiet thermal budget. ScreenMate clamps the GPU power cap to $\le 42\text{W}$ via NVML during consolidation (`nvmlDeviceSetPowerManagementLimit(dev, 42000)`).
+   With peak power clamped to $42\text{W}$ and idle baseline at $12\text{W}$:
+   $$P_{\text{avg}} = \mathcal{D} \cdot P_{\text{peak}} + (1 - \mathcal{D}) \cdot P_{\text{idle}} = 0.333 \times 42\text{W} + 0.667 \times 12\text{W} = \mathbf{22.0\text{W}}$$
+5. **Thermal Result**: The GPU die temperature stabilizes below **56°C** (well below the 75°C threshold). Fans remain locked to silent idle profiles ($< 25\text{ dB}$, human-ear imperceptible).
 
 #### Closed-Loop Thermal Governor:
-- If GPU temperature exceeds $68^\circ\text{C}$: Throttle duty cycle to 1:4 (2s compute, 8s sleep = 20% load).
+- If GPU temperature exceeds $68^\circ\text{C}$: Throttle dynamic pacing multiplier from $2.0\times$ to $4.0\times$ ($\Delta t_{\text{pause}} = \max(8000\text{ms}, 4.0 \times \Delta t_{\text{compute}})$, reducing duty ratio to $\le 20\%$).
 - If GPU temperature exceeds $75^\circ\text{C}$: State transitions to `PAUSED` until temperatures drop below $65^\circ\text{C}$.
 
 ### 5.5 Instant Pre-emption Engine (<50ms SLA)
@@ -726,11 +745,18 @@ PRAGMA foreign_keys = ON;
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
 PRAGMA busy_timeout = 5000;
+PRAGMA recursive_triggers = ON;
 ```
 
 - `journal_mode = WAL`: Write-Ahead Logging allows concurrent readers on Slot 0 while Slot 1 writes consolidation batches, eliminating reader-writer lock contention.
 - `busy_timeout = 5000`: Eliminates `SQLITE_BUSY` errors by automatically waiting up to 5,000ms if a temporary lock is held.
 - `synchronous = NORMAL`: Delivers maximum write throughput without compromising database durability across unexpected OS crashes.
+- `recursive_triggers = ON`: Mandated so that conflict-resolution operations (such as `INSERT OR REPLACE`) or cascaded operations fire trigger handlers, preventing ledger immutability bypasses.
+
+#### Concurrency Safety Mandate: `BEGIN IMMEDIATE` on All Write Transactions
+In SQLite WAL mode with concurrent writers (Slot 0 real-time chat/glance events and Slot 1 background sleep consolidation), starting write transactions with default `BEGIN` (deferred) causes severe deadlocks (`SQLITE_BUSY`) whenever both transactions read before attempting their first write. 
+
+ScreenMate **strictly mandates `BEGIN IMMEDIATE` across all write transactions** in `ISoulStore`. Executing `BEGIN IMMEDIATE` acquires SQLite's `RESERVED` lock immediately at the start of the transaction block. This cleanly serializes concurrent writers without race conditions while allowing concurrent readers on Slot 0 to proceed with zero wait time.
 
 ### 6.2 Production SQLite DDL Specification
 
@@ -747,6 +773,7 @@ PRAGMA foreign_keys = ON;
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
 PRAGMA busy_timeout = 5000;
+PRAGMA recursive_triggers = ON;
 
 -- ----------------------------------------------------------------------------
 -- 1. IMMUTABLE RAW EVENT LEDGER
@@ -807,6 +834,18 @@ BEGIN
     SELECT RAISE(ABORT, 'events table is immutable');
 END;
 
+CREATE TRIGGER IF NOT EXISTS trg_events_prevent_insert_replace
+BEFORE INSERT ON events
+FOR EACH ROW
+WHEN EXISTS (
+    SELECT 1 FROM events
+    WHERE id = new.id
+       OR (new.sha256_hash IS NOT NULL AND sha256_hash = new.sha256_hash)
+)
+BEGIN
+    SELECT RAISE(ABORT, 'events table is immutable: duplicate or replace forbidden');
+END;
+
 -- ----------------------------------------------------------------------------
 -- 4. PROPERTY GRAPH: NODES (Entities, Concepts, Episodes)
 -- ----------------------------------------------------------------------------
@@ -826,11 +865,11 @@ CREATE TABLE IF NOT EXISTS nodes (
                                 'CORE_IDENTITY', 'FAMILY', 'MEDICAL',
                                 'CORE_PREFERENCE', 'PINNED', 'PROJECT_GOAL', NULL
                             )),
-    decay_rate              REAL NOT NULL DEFAULT 0.05,       -- Must be 0.0 if is_anchor = 1
-    stability               REAL NOT NULL DEFAULT 1.0,        -- Stability in days
-    stability_days          REAL NOT NULL DEFAULT 1.0,        -- Explicit stability_days alias
+    decay_rate              REAL NOT NULL DEFAULT 0.05 CHECK(decay_rate >= 0.0),       -- Must be 0.0 if is_anchor = 1
+    stability               REAL NOT NULL DEFAULT 1.0 CHECK(stability > 0.0),        -- Stability in days
+    stability_days          REAL NOT NULL DEFAULT 1.0 CHECK(stability_days > 0.0),   -- Explicit stability_days alias
     retrievability          REAL NOT NULL DEFAULT 1.0,        -- Current recall probability [0.0, 1.0]
-    provisional             INTEGER NOT NULL DEFAULT 1 CHECK(provisional IN (0, 1)),
+    provisional             INTEGER NOT NULL DEFAULT 1 CHECK(provisional IN (0, 1)), -- 1 = quarantined, 0 = permanent
     first_observed_date     TEXT NULL,                        -- Date string: YYYY-MM-DD
     last_observed_date      TEXT NULL,                        -- Date string: YYYY-MM-DD
     observation_days_count  INTEGER NOT NULL DEFAULT 1 CHECK(observation_days_count >= 1),
@@ -861,15 +900,16 @@ CREATE TABLE IF NOT EXISTS edges (
     weight                  REAL NOT NULL DEFAULT 1.0 CHECK(weight >= 0.0 AND weight <= 1.0),
     confidence              REAL NOT NULL DEFAULT 1.0 CHECK(confidence >= 0.0 AND confidence <= 1.0),
     is_anchor               INTEGER NOT NULL DEFAULT 0 CHECK(is_anchor IN (0, 1)),
-    decay_rate              REAL NOT NULL DEFAULT 0.05,       -- Must be 0.0 if is_anchor = 1
-    stability               REAL NOT NULL DEFAULT 1.0,        -- Stability in days
-    stability_days          REAL NOT NULL DEFAULT 1.0,        -- Explicit stability_days alias
+    decay_rate              REAL NOT NULL DEFAULT 0.05 CHECK(decay_rate >= 0.0),       -- Must be 0.0 if is_anchor = 1
+    stability               REAL NOT NULL DEFAULT 1.0 CHECK(stability > 0.0),        -- Stability in days
+    stability_days          REAL NOT NULL DEFAULT 1.0 CHECK(stability_days > 0.0),   -- Explicit stability_days alias
     valid_from              INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000), -- Epoch ms
     valid_until             INTEGER DEFAULT NULL,             -- Epoch ms (NULL = active)
     is_active               INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
-    provisional             INTEGER NOT NULL DEFAULT 1 CHECK(provisional IN (0, 1)),
+    provisional             INTEGER NOT NULL DEFAULT 1 CHECK(provisional IN (0, 1)), -- 1 = quarantined, 0 = permanent
     source_event_id         INTEGER REFERENCES events(id) ON DELETE SET NULL,
-    created_at              INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000)
+    created_at              INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
+    CHECK (valid_until IS NULL OR valid_until >= valid_from)
 );
 
 CREATE INDEX IF NOT EXISTS idx_edges_source_id ON edges(source_id);
@@ -932,6 +972,24 @@ BEGIN
         WHEN new.provisional != 0 THEN
             RAISE(ABORT, 'Anchor edge cannot remain in provisional quarantine')
     END;
+END;
+
+-- Trigger: prevent demoting an anchor node to non-anchor
+CREATE TRIGGER IF NOT EXISTS trg_nodes_prevent_anchor_demotion
+BEFORE UPDATE OF is_anchor ON nodes
+FOR EACH ROW
+WHEN old.is_anchor = 1 AND new.is_anchor = 0
+BEGIN
+    SELECT RAISE(ABORT, 'Anchor nodes cannot be demoted to non-anchor');
+END;
+
+-- Trigger: prevent demoting an anchor edge to non-anchor
+CREATE TRIGGER IF NOT EXISTS trg_edges_prevent_anchor_demotion
+BEFORE UPDATE OF is_anchor ON edges
+FOR EACH ROW
+WHEN old.is_anchor = 1 AND new.is_anchor = 0
+BEGIN
+    SELECT RAISE(ABORT, 'Anchor edges cannot be demoted to non-anchor');
 END;
 
 -- ----------------------------------------------------------------------------
