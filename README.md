@@ -149,3 +149,13 @@ Controls:
 - **Escape (in input field)**: Close speech bubble.
 - **Double click on blob**: Cycle between emotional color states (Calm, Focused, Witty, Thinking, Alert).
 - **Right click on blob**: Open context menu to cycle emotion or exit.
+
+---
+
+## Memory & Database Engine (Phase 3)
+
+ScreenMate features a persistent SQLite memory store located at `data/soul.db` running in WAL mode:
+- **Append-Only Event Ledger**: Every conversation turn is permanently preserved in the `events` table with automatic FTS5 full-text indexing.
+- **Context Continuity**: The companion recalls recent dialogue turns and situational context across restarts.
+- **Zero-Decay Anchors**: Permanent biographical facts (`is_anchor = 1`) are protected by database triggers with `decay_rate = 0.0`.
+- **2-Day Quarantine Gate**: Prevents small local model hallucinations from corrupting the permanent knowledge graph.

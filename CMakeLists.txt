@@ -35,7 +35,22 @@ endif()
 enable_testing()
 
 # -------------------------------------------------------------
-# Target: ScreenMate Shell (Milestone 1 Desktop App)
+# Third Party: SQLite3 Amalgamation with FTS5 and JSON1
+# -------------------------------------------------------------
+add_library(sqlite3 STATIC
+    third_party/sqlite3.c
+)
+target_include_directories(sqlite3 PUBLIC third_party)
+target_compile_definitions(sqlite3 PUBLIC
+    SQLITE_ENABLE_FTS5=1
+    SQLITE_ENABLE_RTREE=1
+    SQLITE_ENABLE_JSON1=1
+    SQLITE_THREADSAFE=1
+    SQLITE_OMIT_LOAD_EXTENSION=1
+)
+
+# -------------------------------------------------------------
+# Target: ScreenMate Shell (Desktop App)
 # -------------------------------------------------------------
 add_executable(screenmate_shell
     src/main.cpp
@@ -43,9 +58,10 @@ add_executable(screenmate_shell
     src/ui/layered_window.cpp
     src/ui/blob_window.cpp
     src/brain/llama_client.cpp
+    src/brain/soul_store.cpp
     src/ui/bubble_window.cpp
 )
-target_link_libraries(screenmate_shell PRIVATE ${PLATFORM_LIBS})
+target_link_libraries(screenmate_shell PRIVATE ${PLATFORM_LIBS} sqlite3)
 
 # -------------------------------------------------------------
 # Target: Unit Tests
@@ -79,5 +95,12 @@ add_executable(test_llama_client
 )
 target_link_libraries(test_llama_client PRIVATE ${PLATFORM_LIBS})
 add_test(NAME TestLlamaClient COMMAND test_llama_client)
+
+add_executable(test_soul_store
+    tests/test_soul_store.cpp
+    src/brain/soul_store.cpp
+)
+target_link_libraries(test_soul_store PRIVATE ${PLATFORM_LIBS} sqlite3)
+add_test(NAME TestSoulStore COMMAND test_soul_store)
 
 message(STATUS "ScreenMate AI C++20 configured for ${CMAKE_SYSTEM_NAME} (${CMAKE_CXX_COMPILER_ID})")
