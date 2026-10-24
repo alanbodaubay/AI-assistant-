@@ -1,155 +1,147 @@
-# ScreenMate AI: Living Desktop AI Companion
+# ScreenMate AI
 
-> An autonomous, visible, and evolving personal AI companion for Windows that lives on your screen as a reactive **"Blob of Light"**, perceives your desktop context, chats like a witty friend, and runs **100% locally and privately** on your GPU.
-
----
-
-## 🌟 Overview & Product Vision
-
-ScreenMate AI is designed as a genuine personal companion ("friend") rather than a sterile corporate assistant:
-- **Visible Desktop Presence**: Sits on your screen as an organic, bioluminescent **Blob of Light** rendered to a native Win32 layered window (`UpdateLayeredWindow`) with near 0% CPU at idle.
-- **100% Local Intelligence**: Runs a local multimodal model (such as **Gemma 4 E4B Q4_K_M** or **Qwen2-VL**) via a local `llama-server` sidecar. Consumes only ~4GB VRAM on an 8GB RTX 4060, leaving 4GB+ free for your games and daily applications.
-- **Zero-Latency Two-Slot Architecture**: Uses `llama-server` with `-np 2`:
-  - **Slot 0**: Dedicated to real-time chat and quick screen glances with `cache_prompt: true`. Prompt evaluation time is virtually **0ms** thanks to a byte-stable cached persona prefix.
-  - **Slot 1**: Reserved for background memory extraction, running only when AC power is connected, user is idle, and GPU load is low.
-- **The SQLite Graph Brain ("The Soul")**:
-  - Completely **decoupled from model weights**: you can swap model weights at any time without losing memories, inside jokes, or your evolving friendship.
-  - Raw append-only event log with SQLite **FTS5** full-text search.
-  - Property knowledge graph (entities & bi-temporal edges).
-  - **2-Day Provisional Quarantine**: Newly extracted facts are marked provisional and only promoted to long-term memory if observed across multiple separate days, stopping small-model hallucinations dead in their tracks.
-- **Active Context Perception & Anti-Clippy Gatekeeper**:
-  - Observes the active foreground window using low-overhead Win32 APIs with automatic capture exclusion (`WDA_EXCLUDEFROMCAPTURE`) so it never sees itself.
-  - **Settle Timer (3–5s)** and **64-bit dHash filter** ensure it only processes stable screen state changes.
-  - **Token Bucket** limits proactive remarks to once every 3–5 minutes (with auto-cooldown if ignored).
-  - **Strict Privacy Gate**: Instantly drops and never captures password managers, banking, or incognito windows.
-- **Instant Hotkey & Comic Dialogue**:
-  - Press `Ctrl + Space` or click the blob to summon an expressive comic-book speech bubble with Undertale-style typing blips and a text input field.
+A lightweight, local-first Windows desktop companion written in C++20. It runs as a floating layered window on top of Windows, communicates with a local `llama-server` sidecar, observes desktop context with privacy filters, and maintains a decoupled knowledge graph in SQLite.
 
 ---
 
-## 🏗️ System Architecture
+## Architecture
+
+The system consists of two primary components:
+1. `screenmate_shell`: A native Win32/C++20 process handling the desktop UI, screen perception, hotkey dispatch, and SQLite memory store.
+2. `llama-server`: A local `llama.cpp` sidecar running a quantized multimodal model (e.g. Gemma 4 E4B Q4_K_M) across two isolated execution slots.
 
 ```mermaid
 flowchart TB
-    subgraph Host["ScreenMate C++20 Shell (screenmate_shell.exe)"]
-        subgraph UI["Win32 Layered Window UI"]
-            BlobWindow["Blob of Light Window\n(Per-Pixel Alpha, Near 0% CPU)"]
-            BubbleWindow["Comic Speech Bubble Window\n(Typing Blips, Text Input Bar)"]
-            Hotkey["Global Hotkey (Ctrl+Space)\n& Click-Through Masks"]
+    subgraph Host["ScreenMate Shell (screenmate_shell.exe)"]
+        subgraph UI["Win32 Layered Window"]
+            BlobWindow["Blob of Light Window\n(Per-pixel alpha, low idle CPU)"]
+            BubbleWindow["Speech Bubble Window\n(Typing blips, text input)"]
+            Hotkey["Global Hotkey (Ctrl+Space)"]
         end
 
-        subgraph Perception["Perception & Gatekeeper Engine"]
-            Capture["Win32 Screen Capture\n(Desktop Duplication / BitBlt)"]
-            PrivacyFilter["Privacy Blacklist Gate\n(Banking, Passwords, Incognito)"]
-            Gatekeeper["Settle Timer (3-5s)\n+ dHash + Token Bucket"]
+        subgraph Perception["Perception Engine"]
+            Capture["Screen Capture (BitBlt / Desktop Duplication)"]
+            PrivacyFilter["Privacy Filter (Drop blacklisted titles)"]
+            Gatekeeper["Settle Timer (3-5s) + dHash Filter"]
         end
 
-        subgraph Memory["The SQLite Graph Brain ('The Soul')"]
-            EventLog[("Raw Event Log (FTS5)")]
-            GraphStore[("Knowledge Graph (Nodes & Bi-Temporal Edges)")]
-            Quarantine["Provisional Quarantine Gate\n(2+ Days Observation Rule)"]
-            Persona["Immutable persona_core.md\n+ Mood Sliders (Affinity, Snark)"]
+        subgraph Memory["SQLite Storage Engine"]
+            EventLog[("Append-only Events Ledger (FTS5)")]
+            GraphStore[("Knowledge Graph (Nodes & Bi-temporal Edges)")]
+            Quarantine["Quarantine Gate (2-day confirmation rule)"]
+            Persona["persona_core.md + mood_state.json"]
         end
 
-        subgraph ToolHooks["Tool & OS Hooks (Core Layer)"]
+        subgraph ToolHooks["OS & Tool Hooks"]
             AppLauncher["App Launcher (ShellExecute)"]
-            NotesVault["Local Markdown Notes Vault"]
-            ExtBridge["Modular Bridge -> epic-pascal Windows Controller"]
+            NotesVault["Markdown Notes Vault"]
         end
     end
 
-    subgraph Sidecar["Local LLM Sidecar (llama-server)"]
-        Slot0["Slot 0: Chat & Screen Glances\n(cache_prompt: true, Persona Prefix Cached)"]
-        Slot1["Slot 1: Background Memory Extraction\n(Runs only on AC Power + User Idle)"]
+    subgraph Sidecar["llama-server Sidecar"]
+        Slot0["Slot 0: Real-time Chat & Glances (cache_prompt: true)"]
+        Slot1["Slot 1: Background Memory Extraction (Idle / AC power only)"]
     end
 
     Hotkey --> BubbleWindow
     BlobWindow <--> BubbleWindow
-    BubbleWindow <-->|cpp-httplib JSON-RPC| Slot0
+    BubbleWindow <-->|HTTP /v1/chat/completions| Slot0
     Capture --> PrivacyFilter --> Gatekeeper -->|Context Glance| Slot0
-    BubbleWindow -.->|Log Turn| EventLog
+    BubbleWindow -.->|Turn log| EventLog
     EventLog --> Quarantine --> GraphStore
-    GraphStore -.->|Inject Active Context| Slot0
-    Slot1 -.->|Extract Facts from Log| Quarantine
+    GraphStore -.->|Working context| Slot0
+    Slot1 -.->|Extract facts| Quarantine
     BubbleWindow --> ToolHooks
 ```
 
 ---
 
-## 💻 Hardware Profile & VRAM Allocation
+## Key Design Principles
 
-Tested for an **NVIDIA GeForce RTX 4060 Laptop GPU (8GB VRAM)**:
+- **Zero Cloud Dependency**: Runs 100% locally on consumer hardware (tested on an RTX 4060 Laptop GPU with 8GB VRAM).
+- **Decoupled Memory ("The Soul")**: Memories and relationships are stored in SQLite (`data/soul.db`), not in the neural weights. Model checkpoints can be swapped without loss of memory.
+- **Situational Mental Model**: Avoids naive chat-log concatenation. Maintains a compact situational state (<100 tokens) and relies on KV-cache continuity in slot 0 to achieve <500ms time-to-first-token.
+- **Anchor Memories**: Core biographical facts (birthdays, allergies, personal lore) are flagged with `is_anchor = 1` and `decay_rate = 0.0`. They are immune to the Ebbinghaus forgetting curve.
+- **2-Day Quarantine**: Speculative or single-observation inferences are quarantined and only promoted to the permanent graph if observed across multiple days.
+- **Window Capture Exclusion**: Calls `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` on UI windows to prevent feedback loops during screen capture.
 
-| Component | VRAM Footprint | Description |
+---
+
+## Memory and Hardware Allocation (8GB RTX 4060)
+
+| Component | VRAM Allocation | Notes |
 | :--- | :--- | :--- |
-| **Model Weights (Gemma 4 E4B Q4_K_M)** | ~4.2 GB | Multimodal vision & text model offloaded to GPU |
-| **KV Cache (`-np 2`, 8K total context)** | ~0.6 GB | Split between Slot 0 (chat) and Slot 1 (extraction) |
-| **CUDA Runtime & Driver** | ~0.3 GB | Base CUDA runtime overhead |
-| **Free VRAM for User Games / Apps** | **~2.9 – 3.5 GB** | Stays responsive without forcing GPU OOM errors |
+| Model Weights (Gemma 4 E4B Q4_K_M) | ~3,360 MB | Full GPU layer offload (`-ngl 99`) |
+| Multimodal Projector (`mmproj`) | ~512 MB | Vision encoder |
+| KV Cache (`-np 2`, 8K total context) | ~512 MB | 4K tokens per slot |
+| CUDA Driver / Runtime | ~288 MB | Host driver overhead |
+| **Committed Total** | **~4,672 MB** | Leaves ~3.5 GB free for games and applications |
 
 ---
 
-## 📁 Repository Layout
+## Project Structure
 
 ```
-├── CMakeLists.txt                  # Modern CMake C++20 build configuration
-├── .gitignore                      # Git ignore rules for builds, db, and binaries
-├── README.md                       # Main project overview and documentation
-├── docs/
-│   └── ARCHITECTURE_AND_PLAN.md    # Detailed architectural design & milestone specs
+├── CMakeLists.txt                  # CMake 3.20+ build file (C++20)
 ├── config/
-│   └── model_profile.json          # llama-server & model hyperparameters
+│   └── model_profile.json          # llama-server parameters and slot assignments
 ├── data/
-│   ├── persona_core.md             # Immutable witty friend persona definition
-│   ├── voice_anchors.json          # Rolling few-shot conversation anchors
-│   ├── mood_state.json             # Dynamic affinity, snark, and energy sliders
-│   └── notes/                      # User local markdown notes vault
+│   ├── persona_core.md             # Baseline companion persona definition
+│   ├── mood_state.json             # Dynamic affinity and mood sliders
+│   ├── voice_anchors.json          # Few-shot dialogue exemplars
+│   └── soul_schema.sql             # SQLite schema DDL (events, nodes, edges, quarantine)
+├── docs/
+│   ├── ARCHITECTURE_AND_PLAN.md    # Initial system implementation plan
+│   └── BRAIN_SPEC.md               # Complete 1,500-line memory and brain specification
 ├── include/
-│   ├── config.h                    # Configuration loader & constants
-│   ├── renderer/                   # Procedural glowing blob & BGRA pixel buffer
-│   ├── ui/                         # Win32 UpdateLayeredWindow wrappers
-│   ├── perception/                 # Screen capture, dHash filter & privacy gate
-│   ├── brain/                      # llama-server HTTP client & SQLite Graph Brain
-│   └── tools/                      # App launcher and notes storage
-├── src/                            # C++20 implementation sources
-├── tests/                          # Unit and integration test suites
-├── third_party/                    # Vendored single-header libraries (sqlite3, httplib, json, miniaudio)
+│   ├── brain/                      # C++20 brain interfaces (i_brain.h, i_soul_store.h, etc.)
+│   ├── renderer/                   # BGRA pixel buffer and procedural blob renderer
+│   └── ui/                         # Win32 UpdateLayeredWindow wrapper classes
+├── src/
+│   ├── main.cpp                    # Application entry point and Win32 message pump
+│   ├── renderer/                   # Blob rendering implementation
+│   └── ui/                         # Window creation, mouse dragging, and message handling
+├── tests/                          # Automated test suites (schema, token budget, failure modes)
 └── scripts/
-    └── run_llama_server.bat        # Convenience script to start llama-server with optimal flags
+    └── run_llama_server.bat        # Launch script for llama-server with dual slots
 ```
 
 ---
 
-## 🚀 Getting Started
+## Building and Running
 
 ### Prerequisites
-- **OS**: Windows 10 / 11 (64-bit)
-- **Compiler**: Clang 18+ (LLVM-MinGW) or MSVC 2022+ with C++20 support
-- **Build System**: CMake 3.20+ and Ninja / MinGW Makefiles
-- **Inference Server**: `llama-server` (from llama.cpp CUDA releases)
-- **Model**: `gemma-4-E4B-it-GGUF` (Q4_K_M) + matching multimodal projector (`mmproj`)
+- Windows 10/11 64-bit
+- Clang (LLVM-MinGW) or MSVC with C++20 support
+- CMake 3.20+ and MinGW Makefiles or Ninja
 
-### Building from Source
+### Build Instructions
 
 ```powershell
-# Configure CMake
+# Configure
 cmake -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
 
-# Build executable and test suites
+# Build the shell and test suite
 cmake --build build --config Release
 
-# Run automated tests
+# Run tests
 ctest --test-dir build --output-on-failure
+pytest tests
 ```
 
----
+### Running the Application
 
-## 🗺️ Roadmap & Milestones
+The compiled executable is located at:
+```
+build/screenmate_shell.exe
+```
 
-- [x] **Milestone 0: Architecture & Research**: Deep verification of llama-server flags, slot isolation, SQLite Graph Brain design, and VRAM budget.
-- [ ] **Milestone 1: The Blob of Light & Layered Window**: Procedural bioluminescent particle & glow renderer running in a Win32 layered window at ~10 FPS idle.
-- [ ] **Milestone 2: Hotkey & Local Chat**: `Ctrl + Space` comic bubble with typing blips connected to `llama-server` Slot 0.
-- [ ] **Milestone 3: The SQLite Graph Brain**: FTS5 event log, knowledge graph, 2-day provisional quarantine, and persona evolution.
-- [ ] **Milestone 4: Screen Perception**: Active window capture, settle timer, dHash change filter, and privacy blacklist.
-- [ ] **Milestone 5: Foundational Tools & Extensibility**: App launcher, markdown notes vault, and bridging to the `epic-pascal` Windows UI automation controller.
+Run it directly from PowerShell or double-click `build/screenmate_shell.exe` in Windows Explorer:
+```powershell
+.\build\screenmate_shell.exe
+```
 
+Controls:
+- **Left click and drag**: Move the blob across your desktop.
+- **Double click**: Cycle between emotional color states (Calm, Focused, Witty, Thinking, Alert).
+- **Right click**: Open context menu to cycle emotion or exit.
