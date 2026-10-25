@@ -19,6 +19,8 @@
 #include "brain/situational_state.h"
 #include "perception/screen_capture.h"
 #include "perception/gatekeeper.h"
+#include "tools/app_launcher.h"
+#include "tools/notes_vault.h"
 
 namespace {
 constexpr int HOTKEY_ID = 100;
@@ -117,6 +119,10 @@ int WINAPI wWinMain(HINSTANCE /*hInstance*/, HINSTANCE /*hPrevInstance*/, LPWSTR
     screenmate::perception::Gatekeeper gatekeeper;
     auto last_external_window = std::make_shared<std::atomic<HWND>>(nullptr);
 
+    // Initialize Core Tools: App Launcher & Markdown Notes Vault (Phase 5)
+    screenmate::tools::AppLauncher app_launcher;
+    screenmate::tools::NotesVault notes_vault("data/notes");
+
     // Seed baseline anchor memory if database is newly created
     if (soul_store.GetActiveAnchors().empty()) {
         screenmate::brain::AnchorFact anchor;
@@ -169,16 +175,55 @@ int WINAPI wWinMain(HINSTANCE /*hInstance*/, HINSTANCE /*hPrevInstance*/, LPWSTR
         }
     });
 
-    // 5. Wire Speech Bubble input: Multi-turn Context + FTS5 Recall + Active Screen Perception
-    bubble.set_on_submit([&blob, &bubble, &soul_store, &screen_capture, &gatekeeper, last_external_window](const std::string& user_text) {
+    // 5. Wire Speech Bubble input: Multi-turn Context + FTS5 Recall + Active Screen Perception + Core Tools
+    bubble.set_on_submit([&blob, &bubble, &soul_store, &screen_capture, &gatekeeper, &app_launcher, &notes_vault, last_external_window](const std::string& user_text) {
         blob.set_emotion(screenmate::renderer::BlobEmotion::Thinking);
         gatekeeper.OnUserInteraction();
 
-        std::thread([&blob, &bubble, &soul_store, &screen_capture, last_external_window, user_text]() {
-            // A. Check for explicit memorization imperatives ("memorize X", "my birthday is X")
+        std::thread([&blob, &bubble, &soul_store, &screen_capture, &app_launcher, &notes_vault, last_external_window, user_text]() {
             std::string lower_input = user_text;
             for (auto& c : lower_input) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
+            // 1. Tool execution: App Launcher
+            std::string target_app = screenmate::tools::AppLauncher::ParseAppFromQuery(user_text);
+            if (!target_app.empty()) {
+                auto launch_res = app_launcher.Launch(target_app);
+                std::string reply;
+                if (launch_res.success) {
+                    reply = "Opened " + target_app + " for you!";
+                    blob.set_emotion(screenmate::renderer::BlobEmotion::Witty);
+                } else {
+                    reply = "I tried to open " + target_app + ", but couldn't find or launch it (" + launch_res.error_message + ").";
+                    blob.set_emotion(screenmate::renderer::BlobEmotion::Alert);
+                }
+                bubble.set_response_text(reply);
+                soul_store.AppendEvent({ 0, "default", 0, "USER_CHAT", user_text, "{}", "", false, 0 });
+                soul_store.AppendEvent({ 0, "default", 0, "TOOL_EXECUTION", reply, "{\"tool\":\"app_launcher\",\"target\":\"" + target_app + "\"}", "", false, 0 });
+                return;
+            }
+
+            // 2. Tool execution: Notes Vault
+            if (lower_input.rfind("note: ", 0) == 0 ||
+                lower_input.rfind("save note: ", 0) == 0 ||
+                lower_input.rfind("take note: ", 0) == 0 ||
+                lower_input.rfind("take a note: ", 0) == 0 ||
+                lower_input.rfind("save note about ", 0) == 0) {
+                std::string note_body = user_text;
+                size_t colon_pos = user_text.find(':');
+                if (colon_pos != std::string::npos) {
+                    note_body = user_text.substr(colon_pos + 1);
+                    while (!note_body.empty() && note_body.front() == ' ') note_body.erase(0, 1);
+                }
+                bool saved = notes_vault.CreateNote("Note from Alan", note_body, {"quick-note"});
+                std::string reply = saved ? "Got it! Saved that into your notes vault." : "Oops, couldn't write the note file.";
+                bubble.set_response_text(reply);
+                blob.set_emotion(screenmate::renderer::BlobEmotion::Witty);
+                soul_store.AppendEvent({ 0, "default", 0, "USER_CHAT", user_text, "{}", "", false, 0 });
+                soul_store.AppendEvent({ 0, "default", 0, "TOOL_EXECUTION", reply, "{\"tool\":\"notes_vault\"}", "", false, 0 });
+                return;
+            }
+
+            // A. Check for explicit memorization imperatives ("memorize X", "my birthday is X")
             // Check if user is asking about the screen
             bool asks_about_screen =
                 (lower_input.find("screen") != std::string::npos) ||

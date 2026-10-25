@@ -63,6 +63,8 @@ add_executable(screenmate_shell
     src/ui/bubble_window.cpp
     src/perception/screen_capture.cpp
     src/perception/gatekeeper.cpp
+    src/tools/app_launcher.cpp
+    src/tools/notes_vault.cpp
 )
 target_link_libraries(screenmate_shell PRIVATE ${PLATFORM_LIBS} sqlite3)
 
@@ -113,5 +115,13 @@ add_executable(test_gatekeeper
 )
 target_link_libraries(test_gatekeeper PRIVATE ${PLATFORM_LIBS})
 add_test(NAME TestGatekeeper COMMAND test_gatekeeper)
+
+add_executable(test_tools
+    tests/test_tools.cpp
+    src/tools/app_launcher.cpp
+    src/tools/notes_vault.cpp
+)
+target_link_libraries(test_tools PRIVATE ${PLATFORM_LIBS})
+add_test(NAME TestTools COMMAND test_tools)
 
 message(STATUS "ScreenMate AI C++20 configured for ${CMAKE_SYSTEM_NAME} (${CMAKE_CXX_COMPILER_ID})")
