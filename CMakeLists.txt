@@ -23,6 +23,7 @@ if(WIN32)
     set(PLATFORM_LIBS
         user32
         gdi32
+        gdiplus
         shell32
         dwmapi
         ole32
@@ -60,6 +61,8 @@ add_executable(screenmate_shell
     src/brain/llama_client.cpp
     src/brain/soul_store.cpp
     src/ui/bubble_window.cpp
+    src/perception/screen_capture.cpp
+    src/perception/gatekeeper.cpp
 )
 target_link_libraries(screenmate_shell PRIVATE ${PLATFORM_LIBS} sqlite3)
 
@@ -102,5 +105,13 @@ add_executable(test_soul_store
 )
 target_link_libraries(test_soul_store PRIVATE ${PLATFORM_LIBS} sqlite3)
 add_test(NAME TestSoulStore COMMAND test_soul_store)
+
+add_executable(test_gatekeeper
+    tests/test_gatekeeper.cpp
+    src/perception/screen_capture.cpp
+    src/perception/gatekeeper.cpp
+)
+target_link_libraries(test_gatekeeper PRIVATE ${PLATFORM_LIBS})
+add_test(NAME TestGatekeeper COMMAND test_gatekeeper)
 
 message(STATUS "ScreenMate AI C++20 configured for ${CMAKE_SYSTEM_NAME} (${CMAKE_CXX_COMPILER_ID})")

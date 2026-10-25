@@ -9,6 +9,7 @@ namespace screenmate::brain {
 struct ChatMessage {
     std::string role; // "system", "user", "assistant"
     std::string content;
+    std::string image_base64 = ""; // Optional base64-encoded JPEG image for multimodal vision
 };
 
 class LlamaClient {

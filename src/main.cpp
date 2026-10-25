@@ -11,11 +11,14 @@
 #include <filesystem>
 #include <algorithm>
 #include <cctype>
+#include <atomic>
 #include "ui/blob_window.h"
 #include "ui/bubble_window.h"
 #include "brain/llama_client.h"
 #include "brain/soul_store.h"
 #include "brain/situational_state.h"
+#include "perception/screen_capture.h"
+#include "perception/gatekeeper.h"
 
 namespace {
 constexpr int HOTKEY_ID = 100;
@@ -109,6 +112,11 @@ int WINAPI wWinMain(HINSTANCE /*hInstance*/, HINSTANCE /*hPrevInstance*/, LPWSTR
     std::string db_file = resolve_database_path();
     screenmate::brain::SoulStore soul_store(db_file);
 
+    // Initialize Screen Perception and Annoyance Gatekeeper (Phase 4)
+    screenmate::perception::ScreenCapture screen_capture(512, 75);
+    screenmate::perception::Gatekeeper gatekeeper;
+    auto last_external_window = std::make_shared<std::atomic<HWND>>(nullptr);
+
     // Seed baseline anchor memory if database is newly created
     if (soul_store.GetActiveAnchors().empty()) {
         screenmate::brain::AnchorFact anchor;
@@ -138,11 +146,19 @@ int WINAPI wWinMain(HINSTANCE /*hInstance*/, HINSTANCE /*hPrevInstance*/, LPWSTR
     // 3. Register Global Hotkey: Ctrl + Space
     RegisterHotKey(blob.hwnd(), HOTKEY_ID, MOD_CONTROL, VK_SPACE);
 
+    auto capture_last_active_window = [&blob, &bubble, last_external_window]() {
+        HWND fg = GetForegroundWindow();
+        if (fg && fg != blob.hwnd() && fg != bubble.hwnd()) {
+            last_external_window->store(fg);
+        }
+    };
+
     // 4. Wire Blob interactions: Click to toggle speech bubble, drag to follow
-    blob.set_on_click([&blob, &bubble]() {
+    blob.set_on_click([&blob, &bubble, capture_last_active_window]() {
         if (bubble.is_visible()) {
             bubble.hide();
         } else {
+            capture_last_active_window();
             bubble.show_near(blob.x(), blob.y());
         }
     });
@@ -153,14 +169,58 @@ int WINAPI wWinMain(HINSTANCE /*hInstance*/, HINSTANCE /*hPrevInstance*/, LPWSTR
         }
     });
 
-    // 5. Wire Speech Bubble input: Multi-turn Context + FTS5 Long-Term Memory Recall
-    bubble.set_on_submit([&blob, &bubble, &soul_store](const std::string& user_text) {
+    // 5. Wire Speech Bubble input: Multi-turn Context + FTS5 Recall + Active Screen Perception
+    bubble.set_on_submit([&blob, &bubble, &soul_store, &screen_capture, &gatekeeper, last_external_window](const std::string& user_text) {
         blob.set_emotion(screenmate::renderer::BlobEmotion::Thinking);
+        gatekeeper.OnUserInteraction();
 
-        std::thread([&blob, &bubble, &soul_store, user_text]() {
+        std::thread([&blob, &bubble, &soul_store, &screen_capture, last_external_window, user_text]() {
             // A. Check for explicit memorization imperatives ("memorize X", "my birthday is X")
             std::string lower_input = user_text;
             for (auto& c : lower_input) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+            // Check if user is asking about the screen
+            bool asks_about_screen =
+                (lower_input.find("screen") != std::string::npos) ||
+                (lower_input.find("look at") != std::string::npos) ||
+                (lower_input.find("looking at") != std::string::npos) ||
+                (lower_input.find("what is this") != std::string::npos) ||
+                (lower_input.find("what's this") != std::string::npos) ||
+                (lower_input.find("see this") != std::string::npos) ||
+                (lower_input.find("my code") != std::string::npos) ||
+                (lower_input.find("check this") != std::string::npos) ||
+                (lower_input.find("what do you see") != std::string::npos) ||
+                (lower_input.find("what am i doing") != std::string::npos) ||
+                (lower_input.find("read this") != std::string::npos) ||
+                (lower_input.find("window") != std::string::npos);
+
+            screenmate::perception::CaptureResult screen_cap;
+            bool has_image = false;
+
+            if (asks_about_screen) {
+                HWND target_hwnd = last_external_window->load();
+                if (!target_hwnd || !IsWindow(target_hwnd)) {
+                    target_hwnd = GetForegroundWindow();
+                    if (target_hwnd == blob.hwnd() || target_hwnd == bubble.hwnd()) {
+                        target_hwnd = nullptr;
+                    }
+                }
+
+                if (target_hwnd) {
+                    screen_cap = screen_capture.CaptureWindow(target_hwnd);
+                    if (screen_cap.is_privacy_blocked) {
+                        std::string reply = "I looked away! That window looks sensitive or password-protected (" + screen_cap.privacy_reason + "), so my privacy shield blocked it.";
+                        bubble.set_response_text(reply);
+                        blob.set_emotion(screenmate::renderer::BlobEmotion::Witty);
+                        soul_store.AppendEvent({
+                            0, "default", 0, "PRIVACY_BLOCKED", reply, "{}", "", false, 0
+                        });
+                        return;
+                    } else if (screen_cap.success && !screen_cap.base64_jpeg.empty()) {
+                        has_image = true;
+                    }
+                }
+            }
 
             bool is_question = (lower_input.find('?') != std::string::npos) ||
                                (lower_input.find("do u ") != std::string::npos) ||
@@ -261,7 +321,14 @@ int WINAPI wWinMain(HINSTANCE /*hInstance*/, HINSTANCE /*hPrevInstance*/, LPWSTR
                     messages.push_back({"assistant", turn.raw_payload});
                 }
             }
-            messages.push_back({"user", user_text});
+            screenmate::brain::ChatMessage current_msg;
+            current_msg.role = "user";
+            current_msg.content = user_text;
+            if (has_image && !screen_cap.base64_jpeg.empty()) {
+                current_msg.image_base64 = screen_cap.base64_jpeg;
+                current_msg.content += "\n[Visual Context: Active window '" + screen_cap.window.title + "' (" + screen_cap.window.process_name + "). High-resolution screen capture is attached.]";
+            }
+            messages.push_back(current_msg);
 
             // H. Stream response from local inference sidecar
             screenmate::brain::LlamaClient client;
@@ -279,6 +346,14 @@ int WINAPI wWinMain(HINSTANCE /*hInstance*/, HINSTANCE /*hPrevInstance*/, LPWSTR
                 soul_store.AppendEvent({
                     0, "default", 0, "COMPANION_CHAT", full_reply, "{}", "", false, 0
                 });
+
+                if (has_image) {
+                    soul_store.AppendEvent({
+                        0, "default", 0, "SCREEN_OBSERVATION", screen_cap.window.title,
+                        "{\"process\":\"" + screen_cap.window.process_name + "\",\"dhash\":\"" + std::to_string(screen_cap.dhash) + "\"}",
+                        "", false, 0
+                    });
+                }
 
                 // Update and persist Situational Working State snapshot
                 state.last_updated_epoch_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -313,6 +388,7 @@ int WINAPI wWinMain(HINSTANCE /*hInstance*/, HINSTANCE /*hPrevInstance*/, LPWSTR
                 if (bubble.is_visible()) {
                     bubble.hide();
                 } else {
+                    capture_last_active_window();
                     bubble.show_near(blob.x(), blob.y());
                 }
                 continue;
@@ -323,6 +399,12 @@ int WINAPI wWinMain(HINSTANCE /*hInstance*/, HINSTANCE /*hPrevInstance*/, LPWSTR
         }
 
         if (!running) break;
+
+        // Track the active foreground window whenever it belongs to an external application
+        HWND fg = GetForegroundWindow();
+        if (fg && fg != blob.hwnd() && fg != bubble.hwnd()) {
+            last_external_window->store(fg);
+        }
 
         // Render current animated frame
         auto now = std::chrono::steady_clock::now();

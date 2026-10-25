@@ -28,10 +28,28 @@ std::string LlamaClient::complete(
 
     json msg_array = json::array();
     for (const auto& m : messages) {
-        msg_array.push_back({
-            {"role", m.role},
-            {"content", m.content}
-        });
+        if (m.image_base64.empty()) {
+            msg_array.push_back({
+                {"role", m.role},
+                {"content", m.content}
+            });
+        } else {
+            json content_parts = json::array();
+            content_parts.push_back({
+                {"type", "text"},
+                {"text", m.content}
+            });
+            content_parts.push_back({
+                {"type", "image_url"},
+                {"image_url", {
+                    {"url", "data:image/jpeg;base64," + m.image_base64}
+                }}
+            });
+            msg_array.push_back({
+                {"role", m.role},
+                {"content", content_parts}
+            });
+        }
     }
 
     // Two-slot prompt caching payload for llama-server
